@@ -12,5 +12,8 @@ fun Application.configureRouting() {
         get("/json/kotlinx-serialization") {
             call.respond(mapOf("hello" to "world"))
         }
+        get("/health"){
+            call.respond(mapOf("status" to "UP"))
+        }
     }
 }
