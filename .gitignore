@@ -1,0 +1,38 @@
+# IntelliJ IDEA
+.idea/
+*.iml
+out/
+
+# Gradle
+.gradle/
+build/
+
+# Kotlin / JVM
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+hs_err_pid*
+.kotlin/
+
+# Logs
+*.log
+logs/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+application-local.conf
+local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker / local data
+docker-data/
+data/
+tmp/
