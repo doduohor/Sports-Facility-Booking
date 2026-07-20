@@ -34,3 +34,25 @@ If the server starts successfully, you'll see the following output:
 2024-12-04 14:32:45.584 [main] INFO  Application - Application started in 0.303 seconds.
 2024-12-04 14:32:45.682 [main] INFO  Application - Responding at http://0.0.0.0:8080
 ```
+
+## Docker
+
+Run the API with Postgres:
+
+```bash
+docker compose up --build
+```
+
+Check the API:
+
+```bash
+curl http://localhost:8080/health
+```
+
+The API container receives database settings through environment variables:
+
+| Variable | Default in compose |
+|----------|--------------------|
+| `DATABASE_URL` | `jdbc:postgresql://postgres:5432/sports_facility_booking` |
+| `DATABASE_USER` | `sports` |
+| `DATABASE_PASSWORD` | `sports` |

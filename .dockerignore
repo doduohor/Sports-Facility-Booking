@@ -1,0 +1,12 @@
+.git
+.gradle
+.idea
+build
+docker-data
+data
+tmp
+*.log
+*.iml
+.env
+.env.*
+!.env.example
