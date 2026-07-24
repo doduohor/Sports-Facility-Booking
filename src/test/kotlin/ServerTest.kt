@@ -1,31 +1,54 @@
 package com.doduohor
 
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
-import kotlin.test.*
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ServerTest {
 
     @Test
-    fun `test root endpoint`() = testApplication {
-        // loads default configuration
+    fun `root returns ok`() = testApplication {
         configure()
-        // verify server root returns 200
-        assertEquals(HttpStatusCode.OK, client.get("/").status)
-        assertEquals(HttpStatusCode.OK, client.get("/health").status)
-        }
 
-    @Test
-    fun `test invalid facilities`() = testApplication{
-        configure()
-        assertEquals(HttpStatusCode.BadRequest, client.get("/api/facilities/test/readings?limit=10").status)
-        assertEquals(HttpStatusCode.BadRequest, client.get("/api/facilities/10000/readings?limit=test").status)
+        val response = client.get("/")
+
+        assertEquals(HttpStatusCode.OK, response.status)
     }
 
     @Test
-    fun `test valid facilities`() = testApplication{
+    fun `health returns ok`() = testApplication {
         configure()
-        assertEquals(HttpStatusCode.OK, client.get("/api/facilities/10000/readings?limit=10").status)
+
+        val response = client.get("/health")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("UP"))
+    }
+
+    @Test
+    fun `invalid facility id returns bad request`() = testApplication {
+        configure()
+
+        val response = client.get("/api/facilities/test/readings?limit=10")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("Invalid"))
+    }
+
+    @Test
+    fun `invalid limit returns bad request`() = testApplication {
+        configure()
+
+        val response = client.get("/api/facilities/10000/readings?limit=test")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("Invalid"))
     }
 }
