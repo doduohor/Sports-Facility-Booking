@@ -17,6 +17,11 @@ class InMemoryFacilityRepository : FacilityRepository {
         return facility
     }
 
+    override fun save(facility: Facility): Facility {
+        facilities[facility.id] = facility
+        return facility
+    }
+
     override fun findById(id: Long): Facility? = facilities[id]
 
     override fun findAll(): List<Facility> = facilities.values.toList()

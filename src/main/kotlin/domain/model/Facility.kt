@@ -31,3 +31,19 @@ data class Facility(
         }
     }
 }
+
+fun Facility.activate(): FacilityActivateResult {
+    return when (status) {
+        FacilityStatus.INACTIVE -> FacilityActivateResult.Success(copy(status = FacilityStatus.ACTIVE))
+        FacilityStatus.MAINTENANCE -> FacilityActivateResult.InvalidStatus
+        FacilityStatus.ACTIVE -> FacilityActivateResult.AlreadyActive
+    }
+}
+
+fun Facility.canBeBooked() = status == FacilityStatus.ACTIVE
+
+sealed interface FacilityActivateResult {
+    data class Success(val facility: Facility) : FacilityActivateResult
+    data object InvalidStatus : FacilityActivateResult
+    data object AlreadyActive : FacilityActivateResult
+}

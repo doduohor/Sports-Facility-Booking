@@ -1,7 +1,9 @@
 package com.doduohor.service
 
 import com.doduohor.domain.model.Facility
+import com.doduohor.domain.model.FacilityActivateResult
 import com.doduohor.domain.model.FacilityType
+import com.doduohor.domain.model.activate
 import com.doduohor.repository.FacilityRepository
 
 class FacilityService(private val facilityRepository: FacilityRepository) {
@@ -24,6 +26,16 @@ class FacilityService(private val facilityRepository: FacilityRepository) {
         return facilityRepository.findAll()
     }
 
+    fun activateFacility(id: Long): ActivateFacilityResult {
+        val facility = facilityRepository.findById(id) ?: return ActivateFacilityResult.NotFound
+
+        return when (val result = facility.activate()) {
+            FacilityActivateResult.AlreadyActive -> ActivateFacilityResult.AlreadyActive
+            FacilityActivateResult.InvalidStatus -> ActivateFacilityResult.InvalidStatus
+            is FacilityActivateResult.Success -> ActivateFacilityResult.Success(facilityRepository.save(result.facility))
+        }
+    }
+
     private fun strToFacilityType(input: String): FacilityType? {
         val facilityTypes = FacilityType.entries.associateBy { it.name.lowercase() }
         return facilityTypes[input.lowercase()]
@@ -34,4 +46,11 @@ sealed interface CreateFacilityResult {
     data class Success(val facility: Facility) : CreateFacilityResult
     data object InvalidName : CreateFacilityResult
     data object InvalidType : CreateFacilityResult
+}
+
+sealed interface ActivateFacilityResult {
+    data class Success(val facility: Facility) : ActivateFacilityResult
+    data object NotFound : ActivateFacilityResult
+    data object InvalidStatus : ActivateFacilityResult
+    data object AlreadyActive : ActivateFacilityResult
 }
