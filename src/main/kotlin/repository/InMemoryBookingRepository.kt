@@ -5,7 +5,7 @@ import com.doduohor.domain.model.BookingTimeInterval
 
 class InMemoryBookingRepository : BookingRepository {
     private val bookings = mutableMapOf<Long, Booking>()
-    private var nextId = 1L
+    private var nextId = 100L
 
     override fun create(facilityId: Long, customerId: Int, timeInterval: BookingTimeInterval): Booking {
         val id = nextId

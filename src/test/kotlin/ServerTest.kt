@@ -1,8 +1,10 @@
 package com.doduohor
 
 import com.doduohor.repository.InMemoryBookingRepository
+import com.doduohor.repository.InMemoryEquipmentRepository
 import com.doduohor.repository.InMemoryFacilityRepository
 import com.doduohor.service.BookingService
+import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -219,7 +221,7 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
 
-        val response = createBooking(facilityId = 1, customerId = 100)
+        val response = createBooking(facilityId = 1, customerId = 900)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.Conflict, response.status)
@@ -232,13 +234,13 @@ class ServerTest {
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
 
-        val response = createBooking(facilityId = 1, customerId = 100)
+        val response = createBooking(facilityId = 1, customerId = 900)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.Created, response.status)
         assertTrue(body.contains("reserved"))
         assertTrue(body.contains("\"facilityId\":1"))
-        assertTrue(body.contains("\"customerId\":100"))
+        assertTrue(body.contains("\"customerId\":900"))
         assertTrue(body.contains("2026-07-28T07:00:00Z"))
         assertTrue(body.contains("2026-07-28T09:00:00Z"))
     }
@@ -248,9 +250,9 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
-        createBooking(facilityId = 1, customerId = 100, startTime = "10:00", endTime = "12:00")
+        createBooking(facilityId = 1, customerId = 900, startTime = "10:00", endTime = "12:00")
 
-        val response = createBooking(facilityId = 1, customerId = 101, startTime = "11:00", endTime = "13:00")
+        val response = createBooking(facilityId = 1, customerId = 901, startTime = "11:00", endTime = "13:00")
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.Conflict, response.status)
@@ -262,13 +264,13 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
-        createBooking(facilityId = 1, customerId = 100, startTime = "10:00", endTime = "12:00")
+        createBooking(facilityId = 1, customerId = 900, startTime = "10:00", endTime = "12:00")
 
-        val response = createBooking(facilityId = 1, customerId = 101, startTime = "12:00", endTime = "13:00")
+        val response = createBooking(facilityId = 1, customerId = 901, startTime = "12:00", endTime = "13:00")
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.Created, response.status)
-        assertTrue(body.contains("\"customerId\":101"))
+        assertTrue(body.contains("\"customerId\":901"))
         assertTrue(body.contains("2026-07-28T09:00:00Z"))
         assertTrue(body.contains("2026-07-28T10:00:00Z"))
     }
@@ -278,13 +280,14 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
-        createBooking(facilityId = 1, customerId = 100)
+        val createResponse = createBooking(facilityId = 1, customerId = 900)
+        val createdBookingId = extractLongField(createResponse.bodyAsText(), "id")
 
-        val response = client.get("/api/bookings/1")
+        val response = client.get("/api/bookings/$createdBookingId")
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertTrue(body.contains("\"id\":1"))
+        assertTrue(body.contains("\"id\":$createdBookingId"))
         assertTrue(body.contains("reserved"))
     }
 
@@ -311,7 +314,7 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
-        createBooking(facilityId = 1, customerId = 100)
+        createBooking(facilityId = 1, customerId = 900)
 
         val response = client.get("/api/bookings")
         val body = response.bodyAsText()
@@ -326,7 +329,7 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
-        createBooking(facilityId = 1, customerId = 100)
+        createBooking(facilityId = 1, customerId = 900)
 
         val response = client.get("/api/facilities/1/bookings")
         val body = response.bodyAsText()
@@ -340,7 +343,7 @@ class ServerTest {
     fun `create booking with missing facility returns not found`() = testApplication {
         configureTestApplication()
 
-        val response = createBooking(facilityId = 99, customerId = 100)
+        val response = createBooking(facilityId = 1, customerId = 900)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.NotFound, response.status)
@@ -351,7 +354,7 @@ class ServerTest {
     fun `create booking with invalid facility id returns bad request`() = testApplication {
         configureTestApplication()
 
-        val response = createBooking(facilityId = 0, customerId = 100)
+        val response = createBooking(facilityId = 0, customerId = 900)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
@@ -364,7 +367,7 @@ class ServerTest {
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
 
-        val response = createBooking(facilityId = 1, customerId = 99)
+        val response = createBooking(facilityId = 1, customerId = 899)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
@@ -377,11 +380,141 @@ class ServerTest {
         createFacility("Central Pool", "POOL")
         client.put("/api/facilities/1/activate")
 
-        val response = createBooking(facilityId = 1, customerId = 100, endTime = "10:00")
+        val response = createBooking(facilityId = 1, customerId = 900, endTime = "10:00")
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(body.contains("invalidTimeInterval"))
+    }
+
+    @Test
+    fun `create equipment for existing facility returns created equipment`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+
+        val response = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.Created, response.status)
+        assertTrue(body.contains("Main ventilation"))
+        assertTrue(body.contains("\"facilityId\":1"))
+        assertTrue(body.contains("ventilation"))
+        assertTrue(body.contains("disabled"))
+    }
+
+    @Test
+    fun `create equipment with unknown type returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+
+        val response = createEquipment(facilityId = 1, name = "Unknown system", type = "UNKNOWN")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidType"))
+    }
+
+    @Test
+    fun `create equipment with blank name returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+
+        val response = createEquipment(facilityId = 1, name = "   ", type = "VENTILATION")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidName"))
+        assertTrue(body.contains("\"code\":400"))
+    }
+
+    @Test
+    fun `create equipment with invalid facility id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = createEquipment(facilityId = 0, name = "Main ventilation", type = "VENTILATION")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidFacilityId"))
+    }
+
+    @Test
+    fun `create equipment with missing facility returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = createEquipment(facilityId = 99, name = "Main ventilation", type = "VENTILATION")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindFacilityId"))
+    }
+
+    @Test
+    fun `get equipment by id returns created equipment`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val createResponse = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val createdEquipmentId = extractLongField(createResponse.bodyAsText(), "id")
+
+        val response = client.get("/api/equipments/$createdEquipmentId")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("\"id\":$createdEquipmentId"))
+        assertTrue(body.contains("Main ventilation"))
+    }
+
+    @Test
+    fun `get equipment with invalid id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/equipments/test")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidEquipmentId"))
+    }
+
+    @Test
+    fun `get missing equipment returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/equipments/999999")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFound"))
+    }
+
+    @Test
+    fun `get equipments returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+
+        val response = client.get("/api/equipments")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("Main ventilation"))
+    }
+
+    @Test
+    fun `get equipments by facility id returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        createFacility("Central Gym", "GYM")
+        createEquipment(facilityId = 1, name = "Pool ventilation", type = "VENTILATION")
+        createEquipment(facilityId = 2, name = "Gym heating", type = "HEATING")
+
+        val response = client.get("/api/facilities/1/equipments")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("Pool ventilation"))
+        assertTrue(!body.contains("Gym heating"))
     }
 
     private suspend fun ApplicationTestBuilder.createFacility(name: String, type: String) =
@@ -419,6 +552,26 @@ class ServerTest {
             )
         }
 
+    private suspend fun ApplicationTestBuilder.createEquipment(facilityId: Long, name: String, type: String) =
+        client.post("/api/equipments") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "facilityId": $facilityId,
+                  "name": "$name",
+                  "type": "$type"
+                }
+                """.trimIndent()
+            )
+        }
+
+    private fun extractLongField(body: String, fieldName: String): Long {
+        val pattern = Regex(""""$fieldName"\s*:\s*(\d+)""")
+        return pattern.find(body)?.groupValues?.get(1)?.toLong()
+            ?: error("Response does not contain numeric field '$fieldName': $body")
+    }
+
     private fun ApplicationTestBuilder.configureTestApplication() {
         application {
             configureSerialization()
@@ -426,7 +579,8 @@ class ServerTest {
             val facilityRepository = InMemoryFacilityRepository()
             configureRouting(
                 FacilityService(facilityRepository),
-                BookingService(InMemoryBookingRepository(), facilityRepository)
+                BookingService(InMemoryBookingRepository(), facilityRepository),
+                EquipmentService(InMemoryEquipmentRepository(), facilityRepository)
             )
         }
     }

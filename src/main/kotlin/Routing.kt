@@ -2,6 +2,8 @@ package com.doduohor
 
 import com.doduohor.api.dto.BookingCreate
 import com.doduohor.api.dto.BookingsResponse
+import com.doduohor.api.dto.EquipmentCreate
+import com.doduohor.api.dto.EquipmentsResponse
 import com.doduohor.api.dto.FacilitiesResponse
 import com.doduohor.api.dto.FacilityCreate
 import com.doduohor.api.dto.ErrorResponse
@@ -10,7 +12,9 @@ import com.doduohor.api.mapper.toResponse
 import com.doduohor.service.ActivateFacilityResult
 import com.doduohor.service.BookingService
 import com.doduohor.service.CreateBookingResult
+import com.doduohor.service.CreateEquipmentResult
 import com.doduohor.service.CreateFacilityResult
+import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
@@ -18,11 +22,12 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
-fun Application.configureRouting(facilityService: FacilityService, bookingService: BookingService) {
+fun Application.configureRouting(facilityService: FacilityService, bookingService: BookingService, equipmentService: EquipmentService) {
     routing {
         healthRoutes()
         facilityRoutes(facilityService)
         bookingRoutes(bookingService)
+        equipmentRoutes(equipmentService)
     }
 }
 
@@ -233,5 +238,83 @@ fun Route.bookingRoutes(bookingService: BookingService) {
         val bookings = bookingService.getByFacilityId(facilityId)
         val response = bookings.map { booking -> booking.toResponse() }
         call.respond(HttpStatusCode.OK, BookingsResponse(response))
+    }
+}
+
+fun Route.equipmentRoutes(equipmentService: EquipmentService){
+    post("/api/equipments"){
+        val request = call.receive<EquipmentCreate>()
+        val equipment = equipmentService.create(request.facilityId, request.name, request.type)
+
+        when(equipment){
+            CreateEquipmentResult.InvalidFacilityId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
+            )
+
+            CreateEquipmentResult.NotFindFacilityId -> call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
+            )
+
+            CreateEquipmentResult.InvalidName -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidName", "An incorrect name has been specified")
+            )
+
+            CreateEquipmentResult.InvalidType -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidType", "An incorrect type has been specified")
+            )
+
+            is CreateEquipmentResult.Success -> call.respond(
+                HttpStatusCode.Created,
+                equipment.equipment.toResponse()
+            )
+        }
+    }
+
+    get("/api/equipments"){
+        val equipments = equipmentService.findAll()
+        val response = equipments.map {equipments -> equipments.toResponse()}
+        call.respond(HttpStatusCode.OK, EquipmentsResponse(response))
+    }
+
+    get("/api/equipments/{equipmentId}"){
+        val equipmentId = call.parameters["equipmentId"]?.toLongOrNull()
+
+        if(equipmentId == null){
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+            )
+            return@get
+        }
+
+        val equipment = equipmentService.findByEquipmentId(equipmentId)
+        if(equipment == null){
+            call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFound", "Equipment not found")
+            )
+            return@get
+        }
+
+        call.respond(HttpStatusCode.OK, equipment.toResponse())
+    }
+
+    get("/api/facilities/{facilityId}/equipments"){
+        val facilityId = call.parameters["facilityId"]?.toLongOrNull()
+        if(facilityId == null){
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
+            )
+            return@get
+        }
+
+        val equipments = equipmentService.findByFacilityId(facilityId)
+        val response = equipments.map {equipments -> equipments.toResponse()}
+        call.respond(HttpStatusCode.OK, EquipmentsResponse(response))
     }
 }

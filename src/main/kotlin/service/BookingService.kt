@@ -19,7 +19,7 @@ class BookingService(private val bookingRepository: BookingRepository, private v
             return CreateBookingResult.InvalidFacilityId
         }
 
-        if (customerId !in 100..1000) {
+        if (customerId !in 900..1000) {
             return CreateBookingResult.InvalidCustomerId
         }
 
