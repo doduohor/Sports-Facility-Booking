@@ -51,15 +51,20 @@ class BookingService(private val bookingRepository: BookingRepository, private v
         return CreateBookingResult.Success(booking)
     }
 
-    fun getByBookingId(id: Long): Booking? {
+    fun findByBookingId(id: Long): Booking? {
         return bookingRepository.findByBookingId(id)
     }
 
-    fun getByFacilityId(id: Long): List<Booking> {
-        return bookingRepository.findByFacilityId(id)
+    fun findByFacilityId(id: Long): FindByFacilityResult {
+        if (id <= 0) {
+            return FindByFacilityResult.InvalidFacilityId
+        }
+
+        val facility = facilityRepository.findById(id) ?: return FindByFacilityResult.NotFindFacilityId
+        return FindByFacilityResult.Success(bookingRepository.findByFacilityId(facility.id))
     }
 
-    fun getBookings(): List<Booking> {
+    fun findAll(): List<Booking> {
         return bookingRepository.findAll()
     }
 }
@@ -72,4 +77,10 @@ sealed interface CreateBookingResult {
     data object InvalidFacilityId : CreateBookingResult
     data object InvalidStatusFacilityId : CreateBookingResult
     data object UnavailableRangeTimeLimit : CreateBookingResult
+}
+
+sealed interface FindByFacilityResult {
+    data class Success(val bookings: List<Booking>): FindByFacilityResult
+    data object InvalidFacilityId: FindByFacilityResult
+    data object NotFindFacilityId: FindByFacilityResult
 }

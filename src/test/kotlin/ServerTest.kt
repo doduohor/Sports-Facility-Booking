@@ -3,9 +3,11 @@ package com.doduohor
 import com.doduohor.repository.InMemoryBookingRepository
 import com.doduohor.repository.InMemoryEquipmentRepository
 import com.doduohor.repository.InMemoryFacilityRepository
+import com.doduohor.repository.InMemoryMeasurementRepository
 import com.doduohor.service.BookingService
 import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
+import com.doduohor.service.MeasurementService
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -340,6 +342,17 @@ class ServerTest {
     }
 
     @Test
+    fun `get bookings by invalid facility id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/facilities/0/bookings")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidFacilityId"))
+    }
+
+    @Test
     fun `create booking with missing facility returns not found`() = testApplication {
         configureTestApplication()
 
@@ -517,6 +530,223 @@ class ServerTest {
         assertTrue(!body.contains("Gym heating"))
     }
 
+    @Test
+    fun `get equipments by invalid facility id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/facilities/0/equipments")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidFacilityId"))
+    }
+
+    @Test
+    fun `create measurement for existing equipment returns created measurement`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.Created, response.status)
+        assertTrue(body.contains("\"equipmentId\":$equipmentId"))
+        assertTrue(body.contains("temperature"))
+        assertTrue(body.contains("celsius"))
+        assertTrue(body.contains("24.5"))
+    }
+
+    @Test
+    fun `create measurement with invalid equipment id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = createMeasurement(equipmentId = 0, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidEquipmentId"))
+    }
+
+    @Test
+    fun `create measurement with missing equipment returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = createMeasurement(equipmentId = 999999, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindEquipmentId"))
+    }
+
+    @Test
+    fun `create measurement with unknown type returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "UNKNOWN", unit = "CELSIUS", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidType"))
+    }
+
+    @Test
+    fun `create measurement with unknown unit returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "UNKNOWN", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidUnit"))
+    }
+
+    @Test
+    fun `create measurement with mismatched type and unit returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "PERCENT", value = 24.5)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidMappingTypeAndUnit"))
+    }
+
+    @Test
+    fun `create measurement with invalid value returns bad request`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "CELSIUS", value = 200.0)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidValue"))
+    }
+
+    @Test
+    fun `create measurement with unsupported equipment measurement type returns conflict`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Pool water supply", type = "WATER_SUPPLY")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createMeasurement(equipmentId, type = "CO2", unit = "PPM", value = 450.0)
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertTrue(body.contains("invalidMeasurementType"))
+    }
+
+    @Test
+    fun `get measurement by id returns created measurement`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+        val measurement = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
+        val measurementId = extractLongField(measurement.bodyAsText(), "id")
+
+        val response = client.get("/api/measurements/$measurementId")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("\"id\":$measurementId"))
+        assertTrue(body.contains("\"equipmentId\":$equipmentId"))
+    }
+
+    @Test
+    fun `get measurement with invalid id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/measurements/test")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidMeasurementId"))
+    }
+
+    @Test
+    fun `get missing measurement returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/measurements/999999")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindMeasurementId"))
+    }
+
+    @Test
+    fun `get measurements returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+        createMeasurement(equipmentId, type = "HUMIDITY", unit = "PERCENT", value = 45.0)
+
+        val response = client.get("/api/measurements")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("humidity"))
+    }
+
+    @Test
+    fun `get measurements by equipment id returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val ventilation = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
+        val waterSupply = createEquipment(facilityId = 1, name = "Water supply", type = "WATER_SUPPLY")
+        val ventilationId = extractLongField(ventilation.bodyAsText(), "id")
+        val waterSupplyId = extractLongField(waterSupply.bodyAsText(), "id")
+        createMeasurement(ventilationId, type = "CO2", unit = "PPM", value = 450.0)
+        createMeasurement(waterSupplyId, type = "TEMPERATURE", unit = "CELSIUS", value = 18.0)
+
+        val response = client.get("/api/equipments/$ventilationId/measurements")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("\"equipmentId\":$ventilationId"))
+        assertTrue(!body.contains("\"equipmentId\":$waterSupplyId"))
+    }
+
+    @Test
+    fun `get measurements by invalid equipment id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/equipments/0/measurements")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidEquipmentId"))
+    }
+
+    @Test
+    fun `get measurements by missing equipment id returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/equipments/999999/measurements")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindEquipmentId"))
+    }
+
     private suspend fun ApplicationTestBuilder.createFacility(name: String, type: String) =
         client.post("/api/facilities") {
             contentType(ContentType.Application.Json)
@@ -566,6 +796,26 @@ class ServerTest {
             )
         }
 
+    private suspend fun ApplicationTestBuilder.createMeasurement(
+        equipmentId: Long,
+        type: String,
+        unit: String,
+        value: Double
+    ) =
+        client.post("/api/measurements") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "equipmentId": $equipmentId,
+                  "type": "$type",
+                  "unit": "$unit",
+                  "value": $value
+                }
+                """.trimIndent()
+            )
+        }
+
     private fun extractLongField(body: String, fieldName: String): Long {
         val pattern = Regex(""""$fieldName"\s*:\s*(\d+)""")
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
@@ -577,10 +827,12 @@ class ServerTest {
             configureSerialization()
             configureStatusPages()
             val facilityRepository = InMemoryFacilityRepository()
+            val equipmentRepository = InMemoryEquipmentRepository()
             configureRouting(
                 FacilityService(facilityRepository),
                 BookingService(InMemoryBookingRepository(), facilityRepository),
-                EquipmentService(InMemoryEquipmentRepository(), facilityRepository)
+                EquipmentService(equipmentRepository, facilityRepository),
+                MeasurementService(InMemoryMeasurementRepository(), equipmentRepository)
             )
         }
     }
