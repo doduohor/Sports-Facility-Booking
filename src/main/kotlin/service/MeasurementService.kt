@@ -9,7 +9,7 @@ import com.doduohor.domain.model.contains
 import com.doduohor.repository.EquipmentRepository
 import com.doduohor.repository.MeasurementRepository
 
-class MeasurementService(private val measurementRepository: MeasurementRepository, private val equipmentRepository: EquipmentRepository){
+class MeasurementService(private val measurementRepository: MeasurementRepository, private val equipmentRepository: EquipmentRepository) {
     private val typeUnitMapping = mapOf<MeasurementType, MeasurementUnit>(
         MeasurementType.TEMPERATURE to MeasurementUnit.CELSIUS,
         MeasurementType.HUMIDITY to MeasurementUnit.PERCENT,
@@ -31,7 +31,7 @@ class MeasurementService(private val measurementRepository: MeasurementRepositor
         MeasurementType.SMOKE to ValueRange(0.0, 100.0)
     )
 
-    fun create(equipmentId: Long, type: String, unit: String, value: Double): CreateMeasurementResult{
+    fun create(equipmentId: Long, type: String, unit: String, value: Double): CreateMeasurementResult {
         if(equipmentId <= 0) return CreateMeasurementResult.InvalidEquipmentId
         if(type.isBlank()) return CreateMeasurementResult.InvalidType
         if(unit.isBlank()) return CreateMeasurementResult.InvalidUnit
@@ -49,29 +49,31 @@ class MeasurementService(private val measurementRepository: MeasurementRepositor
         return CreateMeasurementResult.Success(measurementRepository.create(equipmentId, measurementType, measurementUnit, value))
     }
 
-    fun findByMeasurementId(measurementId: Long): Measurement?{
+    fun findByMeasurementId(measurementId: Long): Measurement? {
         return measurementRepository.findByMeasurementId(measurementId)
     }
-    fun findByEquipmentId(equipmentId: Long): FindEquipmentIdResult{
+
+    fun findByEquipmentId(equipmentId: Long): FindEquipmentIdResult {
         if(equipmentId <= 0) return FindEquipmentIdResult.InvalidEquipmentId
 
         val equipment = equipmentRepository.findByEquipmentId(equipmentId) ?: return FindEquipmentIdResult.NotFindEquipmentId
         return FindEquipmentIdResult.Success(measurementRepository.findByEquipmentId(equipment.id))
     }
-    fun findAll(): List<Measurement>{
+
+    fun findAll(): List<Measurement> {
         return measurementRepository.findAll()
     }
 
-    private fun typeIsValid(type: String): MeasurementType?{
+    private fun typeIsValid(type: String): MeasurementType? {
         return MeasurementType.entries.find { it.name == type.uppercase() }
     }
 
-    private fun unitIsValid(unit: String): MeasurementUnit?{
+    private fun unitIsValid(unit: String): MeasurementUnit? {
         return MeasurementUnit.entries.find { it.name == unit.uppercase() }
     }
 }
 
-sealed interface CreateMeasurementResult{
+sealed interface CreateMeasurementResult {
     data class Success(val measurement: Measurement) : CreateMeasurementResult
     data object InvalidEquipmentId: CreateMeasurementResult
     data object NotFindEquipmentId: CreateMeasurementResult
@@ -84,7 +86,7 @@ sealed interface CreateMeasurementResult{
     data object MeasurementRangeNotConfigured: CreateMeasurementResult
 }
 
-sealed interface FindEquipmentIdResult{
+sealed interface FindEquipmentIdResult {
     data class Success(val measurements: List<Measurement>): FindEquipmentIdResult
     data object InvalidEquipmentId: FindEquipmentIdResult
     data object NotFindEquipmentId: FindEquipmentIdResult

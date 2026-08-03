@@ -3,11 +3,15 @@ package com.doduohor
 import com.doduohor.repository.InMemoryBookingRepository
 import com.doduohor.repository.InMemoryEquipmentRepository
 import com.doduohor.repository.InMemoryFacilityRepository
+import com.doduohor.repository.InMemoryIncidentRepository
 import com.doduohor.repository.InMemoryMeasurementRepository
 import com.doduohor.service.BookingService
 import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
+import com.doduohor.service.IncidentPolicy
+import com.doduohor.service.IncidentService
 import com.doduohor.service.MeasurementService
+import com.doduohor.service.MonitoringService
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -747,6 +751,246 @@ class ServerTest {
         assertTrue(body.contains("notFindEquipmentId"))
     }
 
+    @Test
+    fun `create alarming measurement creates incident`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Fire alarm", type = "FIRE_ALARM")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val measurementResponse = createMeasurement(equipmentId, type = "SMOKE", unit = "PERCENT", value = 12.0)
+        val incidentsResponse = client.get("/api/incidents")
+        val incidentsBody = incidentsResponse.bodyAsText()
+
+        assertEquals(HttpStatusCode.Created, measurementResponse.status)
+        assertEquals(HttpStatusCode.OK, incidentsResponse.status)
+        assertTrue(incidentsBody.contains("smoke_detected"))
+        assertTrue(incidentsBody.contains("high"))
+        assertTrue(incidentsBody.contains("\"equipmentId\":$equipmentId"))
+    }
+
+    @Test
+    fun `create normal measurement does not create incident`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Fire alarm", type = "FIRE_ALARM")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val measurementResponse = createMeasurement(equipmentId, type = "SMOKE", unit = "PERCENT", value = 1.0)
+        val incidentsResponse = client.get("/api/incidents")
+        val incidentsBody = incidentsResponse.bodyAsText()
+
+        assertEquals(HttpStatusCode.Created, measurementResponse.status)
+        assertEquals(HttpStatusCode.OK, incidentsResponse.status)
+        assertTrue(incidentsBody.contains("items"))
+        assertTrue(!incidentsBody.contains("smoke_detected"))
+    }
+
+    @Test
+    fun `create incident returns created incident`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Fire alarm", type = "FIRE_ALARM")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createIncident(
+            facilityId = 1,
+            equipmentId = equipmentId,
+            measurementId = 400,
+            type = "SMOKE_DETECTED",
+            severity = "CRITICAL",
+            measurementType = "SMOKE",
+            measurementUnit = "PERCENT",
+            value = 80.0
+        )
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.Created, response.status)
+        assertTrue(body.contains("\"facilityId\":1"))
+        assertTrue(body.contains("\"equipmentId\":$equipmentId"))
+        assertTrue(body.contains("smoke_detected"))
+        assertTrue(body.contains("critical"))
+        assertTrue(body.contains("open"))
+    }
+
+    @Test
+    fun `create incident with invalid facility id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = createIncident(
+            facilityId = 0,
+            equipmentId = 200,
+            measurementId = 400,
+            type = "SMOKE_DETECTED",
+            severity = "CRITICAL",
+            measurementType = "SMOKE",
+            measurementUnit = "PERCENT",
+            value = 80.0
+        )
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidFacilityId"))
+    }
+
+    @Test
+    fun `create incident with missing facility returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = createIncident(
+            facilityId = 999999,
+            equipmentId = 200,
+            measurementId = 400,
+            type = "SMOKE_DETECTED",
+            severity = "CRITICAL",
+            measurementType = "SMOKE",
+            measurementUnit = "PERCENT",
+            value = 80.0
+        )
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindFacilityId"))
+    }
+
+    @Test
+    fun `create incident with equipment from another facility returns conflict`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        createFacility("Central Gym", "GYM")
+        val equipment = createEquipment(facilityId = 2, name = "Gym ventilation", type = "VENTILATION")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        val response = createIncident(
+            facilityId = 1,
+            equipmentId = equipmentId,
+            measurementId = 400,
+            type = "HIGH_CO2",
+            severity = "HIGH",
+            measurementType = "CO2",
+            measurementUnit = "PPM",
+            value = 1200.0
+        )
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertTrue(body.contains("equipmentDoesNotBelongToFacility"))
+    }
+
+    @Test
+    fun `get incident by id returns created incident`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Fire alarm", type = "FIRE_ALARM")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+        val incident = createIncident(
+            facilityId = 1,
+            equipmentId = equipmentId,
+            measurementId = 400,
+            type = "SMOKE_DETECTED",
+            severity = "CRITICAL",
+            measurementType = "SMOKE",
+            measurementUnit = "PERCENT",
+            value = 80.0
+        )
+        val incidentId = extractLongField(incident.bodyAsText(), "id")
+
+        val response = client.get("/api/incidents/$incidentId")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("\"id\":$incidentId"))
+        assertTrue(body.contains("smoke_detected"))
+    }
+
+    @Test
+    fun `get incident with invalid id returns bad request`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/incidents/test")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(body.contains("invalidIncidentId"))
+    }
+
+    @Test
+    fun `get missing incident returns not found`() = testApplication {
+        configureTestApplication()
+
+        val response = client.get("/api/incidents/999999")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertTrue(body.contains("notFindIncidentId"))
+    }
+
+    @Test
+    fun `get incidents returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(facilityId = 1, name = "Fire alarm", type = "FIRE_ALARM")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+        createIncident(
+            facilityId = 1,
+            equipmentId = equipmentId,
+            measurementId = 400,
+            type = "SMOKE_DETECTED",
+            severity = "CRITICAL",
+            measurementType = "SMOKE",
+            measurementUnit = "PERCENT",
+            value = 80.0
+        )
+
+        val response = client.get("/api/incidents")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("smoke_detected"))
+    }
+
+    @Test
+    fun `get incidents by facility id returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        createFacility("Central Gym", "GYM")
+        val poolEquipment = createEquipment(facilityId = 1, name = "Pool fire alarm", type = "FIRE_ALARM")
+        val gymEquipment = createEquipment(facilityId = 2, name = "Gym ventilation", type = "VENTILATION")
+        val poolEquipmentId = extractLongField(poolEquipment.bodyAsText(), "id")
+        val gymEquipmentId = extractLongField(gymEquipment.bodyAsText(), "id")
+        createIncident(1, poolEquipmentId, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+        createIncident(2, gymEquipmentId, 401, "HIGH_CO2", "HIGH", "CO2", "PPM", 1200.0)
+
+        val response = client.get("/api/facilities/1/incidents")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("\"facilityId\":1"))
+        assertTrue(!body.contains("\"facilityId\":2"))
+    }
+
+    @Test
+    fun `get incidents by equipment id returns response wrapper`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val fireAlarm = createEquipment(facilityId = 1, name = "Pool fire alarm", type = "FIRE_ALARM")
+        val waterSupply = createEquipment(facilityId = 1, name = "Water supply", type = "WATER_SUPPLY")
+        val fireAlarmId = extractLongField(fireAlarm.bodyAsText(), "id")
+        val waterSupplyId = extractLongField(waterSupply.bodyAsText(), "id")
+        createIncident(1, fireAlarmId, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+        createIncident(1, waterSupplyId, 401, "WATER_LEAK", "HIGH", "HUMIDITY", "PERCENT", 90.0)
+
+        val response = client.get("/api/equipments/$fireAlarmId/incidents")
+        val body = response.bodyAsText()
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(body.contains("items"))
+        assertTrue(body.contains("\"equipmentId\":$fireAlarmId"))
+        assertTrue(!body.contains("\"equipmentId\":$waterSupplyId"))
+    }
+
     private suspend fun ApplicationTestBuilder.createFacility(name: String, type: String) =
         client.post("/api/facilities") {
             contentType(ContentType.Application.Json)
@@ -816,6 +1060,34 @@ class ServerTest {
             )
         }
 
+    private suspend fun ApplicationTestBuilder.createIncident(
+        facilityId: Long,
+        equipmentId: Long,
+        measurementId: Long,
+        type: String,
+        severity: String,
+        measurementType: String,
+        measurementUnit: String,
+        value: Double
+    ) =
+        client.post("/api/incidents") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                """
+                {
+                  "facilityId": $facilityId,
+                  "equipmentId": $equipmentId,
+                  "measurementId": $measurementId,
+                  "type": "$type",
+                  "severity": "$severity",
+                  "measurementType": "$measurementType",
+                  "measurementUnit": "$measurementUnit",
+                  "value": $value
+                }
+                """.trimIndent()
+            )
+        }
+
     private fun extractLongField(body: String, fieldName: String): Long {
         val pattern = Regex(""""$fieldName"\s*:\s*(\d+)""")
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
@@ -828,11 +1100,24 @@ class ServerTest {
             configureStatusPages()
             val facilityRepository = InMemoryFacilityRepository()
             val equipmentRepository = InMemoryEquipmentRepository()
+            val measurementRepository = InMemoryMeasurementRepository()
+            val incidentRepository = InMemoryIncidentRepository()
+            val measurementService = MeasurementService(measurementRepository, equipmentRepository)
+            val incidentService = IncidentService(facilityRepository, equipmentRepository, incidentRepository)
+            val monitoringService = MonitoringService(
+                measurementService,
+                incidentService,
+                equipmentRepository,
+                IncidentPolicy()
+            )
+
             configureRouting(
                 FacilityService(facilityRepository),
                 BookingService(InMemoryBookingRepository(), facilityRepository),
                 EquipmentService(equipmentRepository, facilityRepository),
-                MeasurementService(InMemoryMeasurementRepository(), equipmentRepository)
+                measurementService,
+                incidentService,
+                monitoringService
             )
         }
     }

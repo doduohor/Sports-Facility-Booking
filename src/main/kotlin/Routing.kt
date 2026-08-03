@@ -7,6 +7,8 @@ import com.doduohor.api.dto.EquipmentsResponse
 import com.doduohor.api.dto.FacilitiesResponse
 import com.doduohor.api.dto.FacilityCreate
 import com.doduohor.api.dto.ErrorResponse
+import com.doduohor.api.dto.IncidentCreate
+import com.doduohor.api.dto.IncidentsResponse
 import com.doduohor.api.dto.MeasurementCreate
 import com.doduohor.api.dto.MeasurementsResponse
 import com.doduohor.api.dto.SuccessResponse
@@ -21,8 +23,14 @@ import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
 import com.doduohor.service.FindByFacilityResult
 import com.doduohor.service.FindEquipmentIdResult
-import com.doduohor.service.FindFacilityIdResult
+import com.doduohor.service.FindEquipmentsByFacilityIdResult
+import com.doduohor.service.FindIncidentsByEquipmentIdResult
+import com.doduohor.service.FindIncidentsByFacilityIdResult
+import com.doduohor.service.IncidentService
+import com.doduohor.service.IncidentServiceResult
 import com.doduohor.service.MeasurementService
+import com.doduohor.service.MonitoringService
+import com.doduohor.service.MonitoringServiceResult
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.*
 import io.ktor.server.request.receive
@@ -33,14 +41,17 @@ fun Application.configureRouting(
     facilityService: FacilityService,
     bookingService: BookingService,
     equipmentService: EquipmentService,
-    measurementService: MeasurementService
+    measurementService: MeasurementService,
+    incidentService: IncidentService,
+    monitoringService: MonitoringService
 ) {
     routing {
         healthRoutes()
         facilityRoutes(facilityService)
         bookingRoutes(bookingService)
         equipmentRoutes(equipmentService)
-        measurementRoutes(measurementService)
+        measurementRoutes(measurementService, monitoringService)
+        incidentRoutes(incidentService)
     }
 }
 
@@ -341,17 +352,17 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
 
         val equipments = equipmentService.findByFacilityId(facilityId)
         when(equipments){
-            FindFacilityIdResult.InvalidFacilityId -> call.respond(
+            FindEquipmentsByFacilityIdResult.InvalidFacilityId -> call.respond(
                 HttpStatusCode.BadRequest,
                 ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
             )
 
-            FindFacilityIdResult.NotFindFacilityId -> call.respond(
+            FindEquipmentsByFacilityIdResult.NotFindFacilityId -> call.respond(
                 HttpStatusCode.NotFound,
                 ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
             )
 
-            is FindFacilityIdResult.Success -> call.respond(
+            is FindEquipmentsByFacilityIdResult.Success -> call.respond(
                 HttpStatusCode.OK,
                 EquipmentsResponse(equipments.equipments.map {it -> it.toResponse()})
             )
@@ -359,60 +370,82 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
     }
 }
 
-fun Route.measurementRoutes(measurementService: MeasurementService){
+fun Route.measurementRoutes(measurementService: MeasurementService, monitoringService: MonitoringService){
     post("/api/measurements"){
         val request = call.receive<MeasurementCreate>()
-        val measurement = measurementService.create(request.equipmentId, request.type, request.unit, request.value)
+        val monitoringResult = monitoringService.processMeasurement(request.equipmentId, request.type, request.unit, request.value)
 
-        when(measurement){
-            CreateMeasurementResult.InvalidEquipmentId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
-            )
+        when(monitoringResult){
+            is MonitoringServiceResult.MeasurementCreateError -> when(monitoringResult.measurementResult){
+                CreateMeasurementResult.InvalidEquipmentId -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+                )
 
-            CreateMeasurementResult.NotFindEquipmentId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
-            )
+                CreateMeasurementResult.NotFindEquipmentId -> call.respond(
+                    HttpStatusCode.NotFound,
+                    ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
+                )
 
-            CreateMeasurementResult.InvalidMappingTypeAndUnit -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidMappingTypeAndUnit", "The measurement type does not match the specified unit")
-            )
+                CreateMeasurementResult.InvalidMappingTypeAndUnit -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidMappingTypeAndUnit", "The measurement type does not match the specified unit")
+                )
 
-            CreateMeasurementResult.NotSupportedEquipmentType -> call.respond(
+                CreateMeasurementResult.NotSupportedEquipmentType -> call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(500, "notSupportedEquipmentType", "Measurement rules are not configured for this equipment type")
+                )
+
+                CreateMeasurementResult.InvalidMeasurementType -> call.respond(
+                    HttpStatusCode.Conflict,
+                    ErrorResponse(409, "invalidMeasurementType", "This measurement type is not supported by the specified equipment")
+                )
+
+                CreateMeasurementResult.InvalidType -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified")
+                )
+
+                CreateMeasurementResult.InvalidUnit -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
+                )
+
+                CreateMeasurementResult.InvalidValue -> call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
+                )
+
+                CreateMeasurementResult.MeasurementRangeNotConfigured -> call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(500, "measurementRangeNotConfigured", "Measurement value range is not configured")
+                )
+
+                is CreateMeasurementResult.Success -> call.respond(
+                    HttpStatusCode.Created,
+                    monitoringResult.measurementResult.measurement.toResponse()
+                )
+            }
+
+            is MonitoringServiceResult.EquipmentContextLost -> call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorResponse(500, "notSupportedEquipmentType", "Measurement rules are not configured for this equipment type")
+                ErrorResponse(500, "equipmentContextLost", "Equipment context was not found after measurement creation")
             )
 
-            CreateMeasurementResult.InvalidMeasurementType -> call.respond(
-                HttpStatusCode.Conflict,
-                ErrorResponse(409, "invalidMeasurementType", "This measurement type is not supported by the specified equipment")
-            )
-
-            CreateMeasurementResult.InvalidType -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified")
-            )
-
-            CreateMeasurementResult.InvalidUnit -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
-            )
-
-            CreateMeasurementResult.InvalidValue -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
-            )
-
-            CreateMeasurementResult.MeasurementRangeNotConfigured -> call.respond(
+            is MonitoringServiceResult.IncidentCreateError -> call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorResponse(500, "measurementRangeNotConfigured", "Measurement value range is not configured")
+                ErrorResponse(500, "incidentCreateError", "Measurement was created, but incident creation failed")
             )
 
-            is CreateMeasurementResult.Success -> call.respond(
+            is MonitoringServiceResult.SuccessWithIncident -> call.respond(
                 HttpStatusCode.Created,
-                measurement.measurement.toResponse()
+                monitoringResult.measurement.toResponse()
+            )
+
+            is MonitoringServiceResult.SuccessWithoutIncident -> call.respond(
+                HttpStatusCode.Created,
+                monitoringResult.measurement.toResponse()
             )
         }
     }
@@ -469,6 +502,164 @@ fun Route.measurementRoutes(measurementService: MeasurementService){
             is FindEquipmentIdResult.Success -> call.respond(
                 HttpStatusCode.OK,
                 MeasurementsResponse(measurements.measurements.map { it.toResponse() })
+            )
+        }
+    }
+}
+
+fun Route.incidentRoutes(incidentService: IncidentService){
+    post("/api/incidents"){
+        val request = call.receive<IncidentCreate>()
+        val incident = incidentService.create(
+            facilityId = request.facilityId,
+            equipmentId = request.equipmentId,
+            measurementId = request.measurementId,
+            type = request.type,
+            severity = request.severity,
+            measurementType = request.measurementType,
+            measurementUnit = request.measurementUnit,
+            value = request.value
+        )
+
+        when(incident){
+            IncidentServiceResult.InvalidFacilityId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
+            )
+
+            IncidentServiceResult.InvalidEquipmentId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+            )
+
+            IncidentServiceResult.InvalidMeasurementId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidMeasurementId", "An incorrect Measurement ID has been specified")
+            )
+
+            IncidentServiceResult.InvalidType -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidType", "An incorrect incident type has been specified")
+            )
+
+            IncidentServiceResult.InvalidSeverity -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidSeverity", "An incorrect incident severity has been specified")
+            )
+
+            IncidentServiceResult.InvalidMeasurementType -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidMeasurementType", "An incorrect measurement type has been specified")
+            )
+
+            IncidentServiceResult.InvalidMeasurementUnit -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidMeasurementUnit", "An incorrect measurement unit has been specified")
+            )
+
+            IncidentServiceResult.NotFindFacilityId -> call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
+            )
+
+            IncidentServiceResult.NotFindEquipmentId -> call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
+            )
+
+            IncidentServiceResult.EquipmentDoesNotBelongToFacility -> call.respond(
+                HttpStatusCode.Conflict,
+                ErrorResponse(409, "equipmentDoesNotBelongToFacility", "The equipment does not belong to the specified facility")
+            )
+
+            is IncidentServiceResult.Success -> call.respond(
+                HttpStatusCode.Created,
+                incident.incident.toResponse()
+            )
+        }
+    }
+
+    get("/api/incidents"){
+        val incidents = incidentService.findAll()
+        call.respond(HttpStatusCode.OK, IncidentsResponse(incidents.map { it.toResponse() }))
+    }
+
+    get("/api/incidents/{incidentId}"){
+        val incidentId = call.parameters["incidentId"]?.toLongOrNull()
+        if(incidentId == null || incidentId <= 0){
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidIncidentId", "An incorrect Incident ID has been specified")
+            )
+            return@get
+        }
+
+        val incident = incidentService.findByIncidentId(incidentId)
+        if(incident == null){
+            call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindIncidentId", "The specified Incident ID does not exist")
+            )
+            return@get
+        }
+
+        call.respond(HttpStatusCode.OK, incident.toResponse())
+    }
+
+    get("/api/facilities/{facilityId}/incidents"){
+        val facilityId = call.parameters["facilityId"]?.toLongOrNull()
+        if(facilityId == null){
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
+            )
+            return@get
+        }
+
+        val incidents = incidentService.findByFacilityId(facilityId)
+        when(incidents){
+            FindIncidentsByFacilityIdResult.InvalidFacilityId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
+            )
+
+            FindIncidentsByFacilityIdResult.NotFindFacilityId -> call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
+            )
+
+            is FindIncidentsByFacilityIdResult.Success -> call.respond(
+                HttpStatusCode.OK,
+                IncidentsResponse(incidents.incidents.map { it.toResponse() })
+            )
+        }
+    }
+
+    get("/api/equipments/{equipmentId}/incidents"){
+        val equipmentId = call.parameters["equipmentId"]?.toLongOrNull()
+        if(equipmentId == null){
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+            )
+            return@get
+        }
+
+        val incidents = incidentService.findByEquipmentId(equipmentId)
+        when(incidents){
+            FindIncidentsByEquipmentIdResult.InvalidEquipmentId -> call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+            )
+
+            FindIncidentsByEquipmentIdResult.NotFindEquipmentId -> call.respond(
+                HttpStatusCode.NotFound,
+                ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
+            )
+
+            is FindIncidentsByEquipmentIdResult.Success -> call.respond(
+                HttpStatusCode.OK,
+                IncidentsResponse(incidents.incidents.map { it.toResponse() })
             )
         }
     }

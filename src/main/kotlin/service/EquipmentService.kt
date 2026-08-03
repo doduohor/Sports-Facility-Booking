@@ -21,11 +21,11 @@ class EquipmentService(private val equipmentRepository: EquipmentRepository, pri
         return equipmentRepository.findByEquipmentId(equipmentId)
     }
 
-    fun findByFacilityId(facilityId: Long): FindFacilityIdResult {
-        if(facilityId <= 0) return FindFacilityIdResult.InvalidFacilityId
+    fun findByFacilityId(facilityId: Long): FindEquipmentsByFacilityIdResult {
+        if(facilityId <= 0) return FindEquipmentsByFacilityIdResult.InvalidFacilityId
 
-        val facility = facilityRepository.findById(facilityId) ?: return FindFacilityIdResult.NotFindFacilityId
-        return FindFacilityIdResult.Success(equipmentRepository.findByFacilityId(facility.id))
+        val facility = facilityRepository.findById(facilityId) ?: return FindEquipmentsByFacilityIdResult.NotFindFacilityId
+        return FindEquipmentsByFacilityIdResult.Success(equipmentRepository.findByFacilityId(facility.id))
     }
 
     fun findAll(): List<Equipment> {
@@ -45,8 +45,8 @@ sealed interface CreateEquipmentResult {
     data object InvalidType: CreateEquipmentResult
 }
 
-sealed interface FindFacilityIdResult {
-    data class Success(val equipments: List<Equipment>) : FindFacilityIdResult
-    data object InvalidFacilityId: FindFacilityIdResult
-    data object NotFindFacilityId: FindFacilityIdResult
+sealed interface FindEquipmentsByFacilityIdResult {
+    data class Success(val equipments: List<Equipment>) : FindEquipmentsByFacilityIdResult
+    data object InvalidFacilityId: FindEquipmentsByFacilityIdResult
+    data object NotFindFacilityId: FindEquipmentsByFacilityIdResult
 }
