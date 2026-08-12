@@ -1,17 +1,7 @@
 package com.doduohor
 
-import com.doduohor.repository.InMemoryBookingRepository
-import com.doduohor.repository.InMemoryEquipmentRepository
-import com.doduohor.repository.InMemoryFacilityRepository
-import com.doduohor.repository.InMemoryIncidentRepository
-import com.doduohor.repository.InMemoryMeasurementRepository
-import com.doduohor.service.BookingService
-import com.doduohor.service.EquipmentService
-import com.doduohor.service.FacilityService
-import com.doduohor.service.IncidentPolicy
-import com.doduohor.service.IncidentService
-import com.doduohor.service.MeasurementService
-import com.doduohor.service.MonitoringService
+import com.doduohor.di.configureKoin
+import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -20,6 +10,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
@@ -27,6 +18,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ServerTest {
+    private companion object {
+        const val TEST_USERNAME = "admin"
+        const val TEST_PASSWORD = "admin"
+    }
 
     @Test
     fun `root returns ok`() = testApplication {
@@ -71,18 +66,29 @@ class ServerTest {
     }
 
     @Test
-    fun `create facility returns created facility`() = testApplication {
+    fun `create facility without auth returns unauthorized`() = testApplication {
         configureTestApplication()
 
         val response = client.post("/api/facilities") {
             contentType(ContentType.Application.Json)
-            setBody("""
+            setBody(
+                """
                 {
                   "name": "Central Pool",
                   "type": "POOL"
                 }
-            """.trimIndent())
+                """.trimIndent()
+            )
         }
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun `create facility returns created facility`() = testApplication {
+        configureTestApplication()
+
+        val response = createFacility("Central Pool", "POOL")
 
         assertEquals(HttpStatusCode.Created, response.status)
         val body = response.bodyAsText()
@@ -99,17 +105,7 @@ class ServerTest {
     fun `create facility with unknown type returns bad request`() = testApplication {
         configureTestApplication()
 
-        val response = client.post("/api/facilities") {
-            contentType(ContentType.Application.Json)
-            setBody(
-                """
-                {
-                  "name": "Cinema Hall",
-                  "type": "CINEMA"
-                }
-                """.trimIndent()
-            )
-        }
+        val response = createFacility("Cinema Hall", "CINEMA")
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(response.bodyAsText().contains("invalidType"))
@@ -120,6 +116,7 @@ class ServerTest {
         configureTestApplication()
 
         val response = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -139,17 +136,7 @@ class ServerTest {
     fun `blank facility name returns bad request`() = testApplication {
         configureTestApplication()
 
-        val response = client.post("/api/facilities") {
-            contentType(ContentType.Application.Json)
-            setBody(
-                """
-                {
-                  "name": "   ",
-                  "type": "POOL"
-                }
-                """.trimIndent()
-            )
-        }
+        val response = createFacility("   ", "POOL")
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(response.bodyAsText().contains("invalidName"))
@@ -168,17 +155,7 @@ class ServerTest {
     fun `get facilities returns list`() = testApplication {
         configureTestApplication()
 
-        client.post("/api/facilities") {
-            contentType(ContentType.Application.Json)
-            setBody(
-                """
-                {
-                  "name": "Central Gym",
-                  "type": "GYM"
-                }
-                """.trimIndent()
-            )
-        }
+        createFacility("Central Gym", "GYM")
 
         val response = client.get("/api/facilities")
         val body = response.bodyAsText()
@@ -193,7 +170,7 @@ class ServerTest {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
 
-        val response = client.put("/api/facilities/1/activate")
+        val response = activateFacility(1)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -204,7 +181,7 @@ class ServerTest {
     fun `activate missing facility returns not found`() = testApplication {
         configureTestApplication()
 
-        val response = client.put("/api/facilities/999999/activate")
+        val response = activateFacility(999999)
 
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
@@ -213,9 +190,9 @@ class ServerTest {
     fun `activate already active facility returns conflict`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
 
-        val response = client.put("/api/facilities/1/activate")
+        val response = activateFacility(1)
         val body = response.bodyAsText()
 
         assertEquals(HttpStatusCode.Conflict, response.status)
@@ -238,7 +215,7 @@ class ServerTest {
     fun `create booking for active facility returns created booking`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
 
         val response = createBooking(facilityId = 1, customerId = 900)
         val body = response.bodyAsText()
@@ -255,7 +232,7 @@ class ServerTest {
     fun `create overlapping booking returns conflict`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
         createBooking(facilityId = 1, customerId = 900, startTime = "10:00", endTime = "12:00")
 
         val response = createBooking(facilityId = 1, customerId = 901, startTime = "11:00", endTime = "13:00")
@@ -269,7 +246,7 @@ class ServerTest {
     fun `create adjacent booking returns created booking`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
         createBooking(facilityId = 1, customerId = 900, startTime = "10:00", endTime = "12:00")
 
         val response = createBooking(facilityId = 1, customerId = 901, startTime = "12:00", endTime = "13:00")
@@ -285,7 +262,7 @@ class ServerTest {
     fun `get booking by id returns created booking`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
         val createResponse = createBooking(facilityId = 1, customerId = 900)
         val createdBookingId = extractLongField(createResponse.bodyAsText(), "id")
 
@@ -319,7 +296,7 @@ class ServerTest {
     fun `get bookings returns response wrapper`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
         createBooking(facilityId = 1, customerId = 900)
 
         val response = client.get("/api/bookings")
@@ -334,7 +311,7 @@ class ServerTest {
     fun `get bookings by facility id returns response wrapper`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
         createBooking(facilityId = 1, customerId = 900)
 
         val response = client.get("/api/facilities/1/bookings")
@@ -382,7 +359,7 @@ class ServerTest {
     fun `create booking with invalid customer id returns bad request`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
 
         val response = createBooking(facilityId = 1, customerId = 899)
         val body = response.bodyAsText()
@@ -395,7 +372,7 @@ class ServerTest {
     fun `create booking with invalid time interval returns bad request`() = testApplication {
         configureTestApplication()
         createFacility("Central Pool", "POOL")
-        client.put("/api/facilities/1/activate")
+        activateFacility(1)
 
         val response = createBooking(facilityId = 1, customerId = 900, endTime = "10:00")
         val body = response.bodyAsText()
@@ -993,6 +970,7 @@ class ServerTest {
 
     private suspend fun ApplicationTestBuilder.createFacility(name: String, type: String) =
         client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -1004,6 +982,11 @@ class ServerTest {
             )
         }
 
+    private suspend fun ApplicationTestBuilder.activateFacility(facilityId: Long) =
+        client.put("/api/facilities/$facilityId/activate") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+        }
+
     private suspend fun ApplicationTestBuilder.createBooking(
         facilityId: Long,
         customerId: Int,
@@ -1012,6 +995,7 @@ class ServerTest {
         endTime: String = "12:00"
     ) =
         client.post("/api/bookings") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -1028,6 +1012,7 @@ class ServerTest {
 
     private suspend fun ApplicationTestBuilder.createEquipment(facilityId: Long, name: String, type: String) =
         client.post("/api/equipments") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -1047,6 +1032,7 @@ class ServerTest {
         value: Double
     ) =
         client.post("/api/measurements") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -1071,6 +1057,7 @@ class ServerTest {
         value: Double
     ) =
         client.post("/api/incidents") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
             contentType(ContentType.Application.Json)
             setBody(
                 """
@@ -1095,30 +1082,21 @@ class ServerTest {
     }
 
     private fun ApplicationTestBuilder.configureTestApplication() {
+        environment {
+            config = MapApplicationConfig(
+                "security.basic.username" to TEST_USERNAME,
+                "security.basic.password" to TEST_PASSWORD,
+                "database.enabled" to "false"
+            )
+        }
+
         application {
+            configureKoin(null)
             configureSerialization()
             configureStatusPages()
-            val facilityRepository = InMemoryFacilityRepository()
-            val equipmentRepository = InMemoryEquipmentRepository()
-            val measurementRepository = InMemoryMeasurementRepository()
-            val incidentRepository = InMemoryIncidentRepository()
-            val measurementService = MeasurementService(measurementRepository, equipmentRepository)
-            val incidentService = IncidentService(facilityRepository, equipmentRepository, incidentRepository)
-            val monitoringService = MonitoringService(
-                measurementService,
-                incidentService,
-                equipmentRepository,
-                IncidentPolicy()
-            )
-
-            configureRouting(
-                FacilityService(facilityRepository),
-                BookingService(InMemoryBookingRepository(), facilityRepository),
-                EquipmentService(equipmentRepository, facilityRepository),
-                measurementService,
-                incidentService,
-                monitoringService
-            )
+            configureSecurity()
+            configureSSE()
+            configureRouting()
         }
     }
 }

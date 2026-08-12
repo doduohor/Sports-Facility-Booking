@@ -1,42 +1,43 @@
 package com.doduohor
 
-import com.doduohor.repository.InMemoryBookingRepository
-import com.doduohor.repository.InMemoryEquipmentRepository
-import io.ktor.server.engine.*
 import io.ktor.server.application.*
-import com.doduohor.repository.InMemoryFacilityRepository
-import com.doduohor.repository.InMemoryIncidentRepository
-import com.doduohor.repository.InMemoryMeasurementRepository
-import com.doduohor.service.BookingService
-import com.doduohor.service.EquipmentService
-import com.doduohor.service.FacilityService
-import com.doduohor.service.IncidentPolicy
-import com.doduohor.service.IncidentService
-import com.doduohor.service.MeasurementService
-import com.doduohor.service.MonitoringService
+import com.doduohor.di.configureKoin
+import com.doduohor.infrastructure.database.DatabaseConfig
+import com.doduohor.infrastructure.database.DatabaseFactory
 import io.ktor.server.netty.EngineMain
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 fun main(args: Array<String>) {
     EngineMain.main(args)
 }
 
 fun Application.module() {
+    val databaseEnabled = environment.config
+        .propertyOrNull("database.enabled")
+        ?.getString()
+        ?.toBoolean() == true
+
+    val databaseFactory = if (databaseEnabled) DatabaseFactory() else null
+    val database = databaseFactory?.connect(DatabaseConfig.from(environment.config))
+
+    if (database != null) {
+        transaction(database) {
+            exec("SELECT 1")
+        }
+    }
+
+    databaseFactory?.let { factory ->
+        monitor.subscribe(ApplicationStopping) {
+            factory.close()
+        }
+    }
+
+    configureKoin(database)
+    configureCors()
+    configureSSE()
     configureSerialization()
     configureStatusPages()
-
-    val facilityRepository = InMemoryFacilityRepository()
-    val bookingRepository = InMemoryBookingRepository()
-    val equipmentRepository = InMemoryEquipmentRepository()
-    val measurementRepository = InMemoryMeasurementRepository()
-    val incidentRepository = InMemoryIncidentRepository()
-
-    val facilityService = FacilityService(facilityRepository)
-    val bookingService = BookingService(bookingRepository, facilityRepository)
-    val equipmentService = EquipmentService(equipmentRepository, facilityRepository)
-    val measurementService = MeasurementService(measurementRepository, equipmentRepository)
-    val incidentService = IncidentService(facilityRepository, equipmentRepository, incidentRepository)
-    val incidentPolicy = IncidentPolicy()
-    val monitoringService = MonitoringService(measurementService, incidentService, equipmentRepository, incidentPolicy)
-
-    configureRouting(facilityService, bookingService, equipmentService, measurementService, incidentService, monitoringService)
+    configureLogging()
+    configureSecurity()
+    configureRouting()
 }

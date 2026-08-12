@@ -56,3 +56,7 @@ The API container receives database settings through environment variables:
 | `DATABASE_URL` | `jdbc:postgresql://postgres:5432/sports_facility_booking` |
 | `DATABASE_USER` | `sports` |
 | `DATABASE_PASSWORD` | `sports` |
+
+## Technical Debt
+
+- After the MVP is complete, revisit `EventPublisher`: replace plain `mutableSetOf(...)` with a safer subscriber storage approach and consider buffered channels for SSE subscribers.

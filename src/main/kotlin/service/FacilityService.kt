@@ -28,12 +28,19 @@ class FacilityService(private val facilityRepository: FacilityRepository) {
 
     fun activateFacility(id: Long): ActivateFacilityResult {
         val facility = facilityRepository.findById(id) ?: return ActivateFacilityResult.NotFound
-
-        return when (val result = facility.activate()) {
+        return when (val facilityResult = facility.activate()) {
             FacilityActivateResult.AlreadyActive -> ActivateFacilityResult.AlreadyActive
             FacilityActivateResult.InvalidStatus -> ActivateFacilityResult.InvalidStatus
-            is FacilityActivateResult.Success -> ActivateFacilityResult.Success(facilityRepository.save(result.facility))
+            is FacilityActivateResult.Success -> {
+                val savedFacility = facilityRepository.save(facilityResult.facility)
+                if (savedFacility == null) {
+                    ActivateFacilityResult.NotFound
+                } else {
+                    ActivateFacilityResult.Success(savedFacility)
+                }
+            }
         }
+
     }
 
     private fun strToFacilityType(input: String): FacilityType? {

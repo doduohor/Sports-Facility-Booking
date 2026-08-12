@@ -23,6 +23,8 @@ data class Equipment(
     val status: EquipmentStatus
 ){
     companion object{
+        val DEFAULT_STATUS = EquipmentStatus.DISABLED
+
         fun create(id: Long, facilityId: Long, name: String, type: EquipmentType, status: EquipmentStatus): Equipment {
             return Equipment(
                 id = id,

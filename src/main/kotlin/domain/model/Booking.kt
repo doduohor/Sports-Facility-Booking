@@ -18,14 +18,15 @@ data class Booking(
     val createdAt: Instant
 ) {
     companion object {
-        fun createNew(id: Long, facilityId: Long, customerId: Int, timeInterval: BookingTimeInterval): Booking {
+        val DEFAULT_STATUS = BookingStatus.RESERVED
+        fun createNew(id: Long, facilityId: Long, customerId: Int, timeInterval: BookingTimeInterval, createdAt: Instant = Instant.now()): Booking {
             return Booking(
                 id = id,
                 facilityId = facilityId,
                 customerId = customerId,
                 timeInterval = timeInterval,
-                status = BookingStatus.RESERVED,
-                createdAt = Instant.now()
+                status = DEFAULT_STATUS,
+                createdAt = createdAt
             )
         }
     }

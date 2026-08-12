@@ -15,6 +15,7 @@ enum class MeasurementUnit{
     PPM
 }
 
+
 data class ValueRange(
     val min: Double,
     val max: Double

@@ -12,6 +12,22 @@ enum class FacilityStatus {
     MAINTENANCE
 }
 
+data class FacilityPrepare(
+    val name: String,
+    val type: FacilityType,
+){
+    companion object{
+        fun prepareNew(name: String, type: FacilityType): FacilityPrepare {
+            require(name.isNotBlank()) { "Facility name must not be blank" }
+
+            return FacilityPrepare(
+                name = name.trim(),
+                type = type
+            )
+        }
+    }
+}
+
 data class Facility(
     val id: Long,
     val name: String,
@@ -19,6 +35,7 @@ data class Facility(
     val status: FacilityStatus
 ) {
     companion object {
+        val DEFAULT_STATUS = FacilityStatus.INACTIVE
         fun createNew(id: Long, name: String, type: FacilityType): Facility {
             require(name.isNotBlank()) { "Facility name must not be blank" }
 
@@ -26,7 +43,7 @@ data class Facility(
                 id = id,
                 name = name.trim(),
                 type = type,
-                status = FacilityStatus.INACTIVE
+                status = DEFAULT_STATUS
             )
         }
     }
