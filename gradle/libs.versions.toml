@@ -23,6 +23,7 @@ flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", versio
 testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
 testcontainers-mongodb = { module = "org.testcontainers:testcontainers-mongodb" }
+testcontainers-rabbitmq = { module = "org.testcontainers:testcontainers-rabbitmq" }
 testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-junit-jupiter" }
 junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit-jupiter" }
 junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit-jupiter" }
@@ -41,6 +42,7 @@ ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref 
 mongodb-bom = { module = "org.mongodb:mongodb-driver-bom", version.ref = "mongodb" }
 mongodb-driver-kotlin-coroutine = { module = "org.mongodb:mongodb-driver-kotlin-coroutine" }
 mongodb-bson-kotlinx = { module = "org.mongodb:bson-kotlinx" }
+exposed-json = { module = "org.jetbrains.exposed:exposed-json", version.ref = "exposed" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

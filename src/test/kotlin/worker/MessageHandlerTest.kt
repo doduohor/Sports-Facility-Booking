@@ -9,12 +9,15 @@ import com.doduohor.infrastructure.messaging.RabbitMqEventType
 import com.doduohor.infrastructure.notification.NotificationSender
 import com.doduohor.infrastructure.notification.NotificationSenderResult
 import com.doduohor.repository.mongo.EventHistoryRepository
+import com.doduohor.repository.mongo.MarkFailedResult
+import com.doduohor.repository.mongo.MarkProcessedResult
+import com.doduohor.repository.mongo.MarkStartProcessingResult
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -36,22 +39,61 @@ class MessageHandlerTest {
         override suspend fun createIndexes() {
         }
 
-        override suspend fun tryStartProcessing(event: EventHistoryDocument): Boolean {
-            if (savedEvents.any { it.eventId == event.eventId }) {
-                return false
+        override suspend fun tryStartProcessing(event: EventHistoryDocument): MarkStartProcessingResult {
+            val existingEvent = savedEvents.firstOrNull { it.eventId == event.eventId }
+            if (existingEvent == null) {
+                savedEvents.add(
+                    event.copy(
+                        status = EventHistoryStatus.PROCESSING,
+                        attempt = 1,
+                        processedAt = null,
+                        errorMessage = null,
+                        processingStartedAt = Instant.now().toString()
+                    )
+                )
+                return MarkStartProcessingResult.Started
             }
-            savedEvents.add(event)
-            return true
+
+            return when (existingEvent.status) {
+                EventHistoryStatus.PROCESSING -> MarkStartProcessingResult.AlreadyProcessing
+                EventHistoryStatus.PROCESSED -> MarkStartProcessingResult.AlreadyProcessed
+                EventHistoryStatus.FAILED -> {
+                    if (existingEvent.attempt >= 3) {
+                        MarkStartProcessingResult.AttemptsExceeded
+                    } else {
+                        savedEvents.remove(existingEvent)
+                        savedEvents.add(
+                            existingEvent.copy(
+                                status = EventHistoryStatus.PROCESSING,
+                                attempt = existingEvent.attempt + 1,
+                                processedAt = null,
+                                errorMessage = null,
+                                processingStartedAt = Instant.now().toString()
+                            )
+                        )
+                        MarkStartProcessingResult.Started
+                    }
+                }
+            }
         }
 
-        override suspend fun markProcessed(eventId: String) {
-            val event = savedEvents.first { it.eventId == eventId }
+        override suspend fun markProcessed(eventId: String): MarkProcessedResult {
+            val event = savedEvents.firstOrNull { it.eventId == eventId }
+                ?: return MarkProcessedResult.NotFound
+            if (event.status != EventHistoryStatus.PROCESSING) {
+                return MarkProcessedResult.NotProcessing
+            }
             savedEvents.remove(event)
             savedEvents.add(event.copy(status = EventHistoryStatus.PROCESSED))
+            return MarkProcessedResult.Updated
         }
 
-        override suspend fun markFailed(eventId: String, errorMessage: String) {
-            val event = savedEvents.first { it.eventId == eventId }
+        override suspend fun markFailed(eventId: String, errorMessage: String): MarkFailedResult {
+            val event = savedEvents.firstOrNull { it.eventId == eventId }
+                ?: return MarkFailedResult.NotFound
+            if (event.status != EventHistoryStatus.PROCESSING) {
+                return MarkFailedResult.NotProcessing
+            }
             savedEvents.remove(event)
             savedEvents.add(
                 event.copy(
@@ -59,6 +101,7 @@ class MessageHandlerTest {
                     errorMessage = errorMessage
                 )
             )
+            return MarkFailedResult.Updated
         }
     }
     private class FakeNotificationSender(

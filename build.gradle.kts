@@ -38,6 +38,7 @@ dependencies {
     testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.mongodb)
+    testImplementation(libs.testcontainers.rabbitmq)
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.junit.jupiter.api)
     testRuntimeOnly(libs.junit.jupiter.engine)
@@ -49,6 +50,7 @@ dependencies {
     implementation(platform(libs.mongodb.bom))
     implementation(libs.mongodb.driver.kotlin.coroutine)
     implementation(libs.mongodb.bson.kotlinx)
+    implementation(libs.exposed.json)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.ktor.server.test.host)

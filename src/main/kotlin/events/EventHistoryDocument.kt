@@ -15,6 +15,7 @@ data class EventHistoryDocument(
     val eventCreatedAt: String,
     val receivedAt: String,
     val processedAt: String?,
+    val processingStartedAt: String?,
     val data: JsonObject,
     val status: EventHistoryStatus,
     val errorMessage: String?,

@@ -10,6 +10,8 @@ import com.doduohor.infrastructure.notification.NotificationSenderResult
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.EventHistoryStatus
 import com.doduohor.repository.mongo.EventHistoryRepository
+import com.doduohor.repository.mongo.MarkProcessedResult
+import com.doduohor.repository.mongo.MarkStartProcessingResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
@@ -26,22 +28,27 @@ class MessageHandler(
         try{
             val rabbitEvent = Json.decodeFromString<RabbitMqEvent>(message)
             eventId = rabbitEvent.eventId
-            val started = eventHistoryRepository.tryStartProcessing(
+            when (eventHistoryRepository.tryStartProcessing(
                 EventHistoryDocument(
                     eventId = rabbitEvent.eventId,
                     eventType = rabbitEvent.eventType.name,
                     eventCreatedAt = rabbitEvent.createdAt,
                     receivedAt = Instant.now().toString(),
                     processedAt = null,
+                    processingStartedAt = Instant.now().toString(),
                     data = rabbitEvent.data.jsonObject,
                     status = EventHistoryStatus.PROCESSING,
                     errorMessage = null,
                     attempt = 1
                 )
-            )
-            if (!started) {
-                logger.info("Event already exists, skipping duplicate: {}", rabbitEvent.eventId)
-                return MessageHandlerResult.Success
+            )) {
+                MarkStartProcessingResult.Started -> Unit
+                MarkStartProcessingResult.AlreadyProcessing,
+                MarkStartProcessingResult.AlreadyProcessed,
+                MarkStartProcessingResult.AttemptsExceeded -> {
+                    logger.info("Event is not available for processing: {}", rabbitEvent.eventId)
+                    return MessageHandlerResult.Success
+                }
             }
 
             val result = when(rabbitEvent.eventType){
@@ -60,8 +67,14 @@ class MessageHandler(
 
             return when(result) {
                 MessageHandlerResult.Success -> {
-                    eventHistoryRepository.markProcessed(rabbitEvent.eventId)
-                    MessageHandlerResult.Success
+                    when (eventHistoryRepository.markProcessed(rabbitEvent.eventId)) {
+                        MarkProcessedResult.Updated -> MessageHandlerResult.Success
+                        MarkProcessedResult.NotFound,
+                        MarkProcessedResult.NotProcessing -> {
+                            logger.error("Failed to mark event as PROCESSED: {}", rabbitEvent.eventId)
+                            MessageHandlerResult.Failure
+                        }
+                    }
                 }
                 MessageHandlerResult.Failure -> {
                     eventHistoryRepository.markFailed(rabbitEvent.eventId, "Event processing failed")

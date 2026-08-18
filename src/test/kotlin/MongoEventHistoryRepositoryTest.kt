@@ -2,6 +2,10 @@ package com.doduohor
 
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.EventHistoryStatus
+import com.doduohor.events.EventProcessingPolicy
+import com.doduohor.repository.mongo.MarkFailedResult
+import com.doduohor.repository.mongo.MarkProcessedResult
+import com.doduohor.repository.mongo.MarkStartProcessingResult
 import com.doduohor.infrastructure.database.mongo.MongoConfig
 import com.doduohor.infrastructure.database.mongo.MongoFactory
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
@@ -21,6 +25,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import java.time.Instant
 
 @Testcontainers
 class MongoEventHistoryRepositoryTest {
@@ -86,11 +91,12 @@ class MongoEventHistoryRepositoryTest {
         val started = repository.tryStartProcessing(event)
 
         val savedEvent = repository.findById("event-1")
-        assertTrue(started)
+        assertEquals(MarkStartProcessingResult.Started, started)
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.PROCESSING, savedEvent.status)
         assertEquals(1, savedEvent.attempt)
         assertNull(savedEvent.processedAt)
+        assertNotNull(savedEvent.processingStartedAt)
         assertNull(savedEvent.errorMessage)
     }
 
@@ -106,9 +112,92 @@ class MongoEventHistoryRepositoryTest {
         val firstStart = repository.tryStartProcessing(event)
         val secondStart = repository.tryStartProcessing(event)
 
-        assertTrue(firstStart)
-        assertFalse(secondStart)
+        assertEquals(MarkStartProcessingResult.Started, firstStart)
+        assertEquals(MarkStartProcessingResult.AlreadyProcessing, secondStart)
         assertEquals(1, repository.findByType("MEASUREMENT_CREATED").size)
+    }
+
+    @Test
+    fun `tryStartProcessing retries failed event and increments attempt`() = runBlocking {
+        repository.createIndexes()
+        val event = event(
+            id = 1,
+            type = "INCIDENT_CREATED",
+            status = EventHistoryStatus.PROCESSING
+        )
+
+        assertEquals(MarkStartProcessingResult.Started, repository.tryStartProcessing(event))
+        assertEquals(MarkFailedResult.Updated, repository.markFailed("event-1", "telegram error"))
+
+        val result = repository.tryStartProcessing(event)
+        val savedEvent = repository.findById("event-1")
+
+        assertEquals(MarkStartProcessingResult.Started, result)
+        assertNotNull(savedEvent)
+        assertEquals(EventHistoryStatus.PROCESSING, savedEvent.status)
+        assertEquals(2, savedEvent.attempt)
+        assertNull(savedEvent.errorMessage)
+    }
+
+    @Test
+    fun `tryStartProcessing does not retry failed event after attempt limit`() = runBlocking {
+        repository.createIndexes()
+        repository.save(
+            event(
+                id = 1,
+                type = "INCIDENT_CREATED",
+                status = EventHistoryStatus.FAILED,
+                attempt = 3
+            )
+        )
+
+        val result = repository.tryStartProcessing(event(id = 1, type = "INCIDENT_CREATED"))
+
+        assertEquals(MarkStartProcessingResult.AttemptsExceeded, result)
+        assertEquals(EventHistoryStatus.FAILED, repository.findById("event-1")?.status)
+    }
+
+    @Test
+    fun `tryStartProcessing does not restart fresh processing event`() = runBlocking {
+        repository.createIndexes()
+        repository.save(
+            event(
+                id = 1,
+                type = "INCIDENT_CREATED",
+                status = EventHistoryStatus.PROCESSING,
+                processingStartedAt = Instant.now().toString()
+            )
+        )
+
+        val result = repository.tryStartProcessing(event(id = 1, type = "INCIDENT_CREATED"))
+
+        assertEquals(MarkStartProcessingResult.AlreadyProcessing, result)
+        assertEquals(1, repository.findById("event-1")?.attempt)
+    }
+
+    @Test
+    fun `tryStartProcessing restarts stale processing event and increments attempt`() = runBlocking {
+        repository.createIndexes()
+        repository.save(
+            event(
+                id = 1,
+                type = "INCIDENT_CREATED",
+                status = EventHistoryStatus.PROCESSING,
+                processingStartedAt = Instant.now()
+                    .minusSeconds(EventProcessingPolicy.PROCESSING_TIMEOUT_SECONDS + 1)
+                    .toString()
+            )
+        )
+
+        val result = repository.tryStartProcessing(event(id = 1, type = "INCIDENT_CREATED"))
+        val savedEvent = repository.findById("event-1")
+
+        assertEquals(MarkStartProcessingResult.Started, result)
+        assertNotNull(savedEvent)
+        assertEquals(EventHistoryStatus.PROCESSING, savedEvent.status)
+        assertEquals(2, savedEvent.attempt)
+        assertTrue(savedEvent.processingStartedAt != null)
+        Unit
     }
 
     @Test
@@ -118,13 +207,36 @@ class MongoEventHistoryRepositoryTest {
             event(id = 1, type = "MEASUREMENT_CREATED", status = EventHistoryStatus.PROCESSING)
         )
 
-        repository.markProcessed("event-1")
+        val result = repository.markProcessed("event-1")
 
         val savedEvent = repository.findById("event-1")
+        assertEquals(MarkProcessedResult.Updated, result)
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
         assertNotNull(savedEvent.processedAt)
         assertNull(savedEvent.errorMessage)
+    }
+
+    @Test
+    fun `markProcessed does not change non-processing event`() = runBlocking {
+        repository.createIndexes()
+        repository.save(event(id = 1, type = "MEASUREMENT_CREATED"))
+
+        val result = repository.markProcessed("event-1")
+
+        val savedEvent = repository.findById("event-1")
+        assertEquals(MarkProcessedResult.NotProcessing, result)
+        assertNotNull(savedEvent)
+        assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
+    }
+
+    @Test
+    fun `markProcessed returns not found for unknown event`() = runBlocking {
+        repository.createIndexes()
+
+        val result = repository.markProcessed("missing-event")
+
+        assertEquals(MarkProcessedResult.NotFound, result)
     }
 
     @Test
@@ -134,13 +246,28 @@ class MongoEventHistoryRepositoryTest {
             event(id = 1, type = "INCIDENT_CREATED", status = EventHistoryStatus.PROCESSING)
         )
 
-        repository.markFailed("event-1", "telegram error")
+        val result = repository.markFailed("event-1", "telegram error")
 
         val savedEvent = repository.findById("event-1")
+        assertEquals(MarkFailedResult.Updated, result)
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.FAILED, savedEvent.status)
         assertNotNull(savedEvent.processedAt)
         assertEquals("telegram error", savedEvent.errorMessage)
+    }
+
+    @Test
+    fun `markFailed does not change non-processing event`() = runBlocking {
+        repository.createIndexes()
+        repository.save(event(id = 1, type = "INCIDENT_CREATED"))
+
+        val result = repository.markFailed("event-1", "telegram error")
+
+        val savedEvent = repository.findById("event-1")
+        assertEquals(MarkFailedResult.NotProcessing, result)
+        assertNotNull(savedEvent)
+        assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
+        assertNull(savedEvent.errorMessage)
     }
 
     @Test
@@ -157,7 +284,9 @@ class MongoEventHistoryRepositoryTest {
     private fun event(
         id: Long,
         type: String,
-        status: EventHistoryStatus = EventHistoryStatus.PROCESSED
+        status: EventHistoryStatus = EventHistoryStatus.PROCESSED,
+        attempt: Int = 1,
+        processingStartedAt: String? = null
     ): EventHistoryDocument =
         EventHistoryDocument(
             eventId = "event-$id",
@@ -165,12 +294,13 @@ class MongoEventHistoryRepositoryTest {
             eventCreatedAt = "2026-08-16T10:00:00Z",
             receivedAt = "2026-08-16T10:00:01Z",
             processedAt = null,
+            processingStartedAt = processingStartedAt,
             data = buildJsonObject {
                 put("id", id)
                 put("value", 24.5)
             },
             status = status,
             errorMessage = null,
-            attempt = 1
+            attempt = attempt
         )
 }
