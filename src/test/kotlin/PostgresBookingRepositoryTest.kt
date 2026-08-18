@@ -3,8 +3,8 @@ package com.doduohor
 import com.doduohor.domain.model.BookingStatus
 import com.doduohor.domain.model.BookingTimeInterval
 import com.doduohor.domain.model.FacilityType
-import com.doduohor.infrastructure.database.BookingTable
-import com.doduohor.infrastructure.database.FacilityTable
+import com.doduohor.infrastructure.database.postgres.BookingTable
+import com.doduohor.infrastructure.database.postgres.FacilityTable
 import com.doduohor.repository.postgres.PostgresBookingRepository
 import com.doduohor.repository.postgres.PostgresFacilityRepository
 import com.zaxxer.hikari.HikariConfig

@@ -6,7 +6,7 @@ import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
-import com.doduohor.infrastructure.database.IncidentTable
+import com.doduohor.infrastructure.database.postgres.IncidentTable
 import com.doduohor.repository.IncidentRepository
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq

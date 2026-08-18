@@ -1,6 +1,7 @@
 package com.doduohor
 
 import com.doduohor.di.configureKoin
+import com.doduohor.infrastructure.messaging.MessagePublisher
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -21,6 +22,14 @@ class ServerTest {
     private companion object {
         const val TEST_USERNAME = "admin"
         const val TEST_PASSWORD = "admin"
+    }
+
+    private class FakeMessagePublisher : MessagePublisher {
+        val messages = mutableListOf<String>()
+
+        override fun publish(message: String) {
+            messages.add(message)
+        }
     }
 
     @Test
@@ -1086,12 +1095,22 @@ class ServerTest {
             config = MapApplicationConfig(
                 "security.basic.username" to TEST_USERNAME,
                 "security.basic.password" to TEST_PASSWORD,
-                "database.enabled" to "false"
+                "database.enabled" to "false",
+                "rabbitmq.host" to "localhost",
+                "rabbitmq.port" to "5672",
+                "rabbitmq.username" to "guest",
+                "rabbitmq.password" to "guest",
+                "rabbitmq.exchange" to "sports.events",
+                "rabbitmq.queue" to "sports.measurements",
+                "rabbitmq.routingKey" to "measurement.created",
+                "rabbitmq.deadLetterExchange" to "sports.events.dlq",
+                "rabbitmq.deadLetterQueue" to "sports.measurements.dlq",
+                "rabbitmq.deadLetterRoutingKey" to "measurement.created.dlq"
             )
         }
 
         application {
-            configureKoin(null)
+            configureKoin(null, FakeMessagePublisher())
             configureSerialization()
             configureStatusPages()
             configureSecurity()

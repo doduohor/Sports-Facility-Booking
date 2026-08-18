@@ -4,7 +4,7 @@ import com.doduohor.domain.model.Facility
 import com.doduohor.domain.model.FacilityPrepare
 import com.doduohor.domain.model.FacilityStatus
 import com.doduohor.domain.model.FacilityType
-import com.doduohor.infrastructure.database.FacilityTable
+import com.doduohor.infrastructure.database.postgres.FacilityTable
 import com.doduohor.repository.FacilityRepository
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database

@@ -3,7 +3,7 @@ package com.doduohor.repository.postgres
 import com.doduohor.domain.model.Measurement
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
-import com.doduohor.infrastructure.database.MeasurementTable
+import com.doduohor.infrastructure.database.postgres.MeasurementTable
 import com.doduohor.repository.MeasurementRepository
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq

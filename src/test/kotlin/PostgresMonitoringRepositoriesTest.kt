@@ -8,11 +8,11 @@ import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
-import com.doduohor.infrastructure.database.BookingTable
-import com.doduohor.infrastructure.database.EquipmentTable
-import com.doduohor.infrastructure.database.FacilityTable
-import com.doduohor.infrastructure.database.IncidentTable
-import com.doduohor.infrastructure.database.MeasurementTable
+import com.doduohor.infrastructure.database.postgres.BookingTable
+import com.doduohor.infrastructure.database.postgres.EquipmentTable
+import com.doduohor.infrastructure.database.postgres.FacilityTable
+import com.doduohor.infrastructure.database.postgres.IncidentTable
+import com.doduohor.infrastructure.database.postgres.MeasurementTable
 import com.doduohor.repository.postgres.PostgresEquipmentRepository
 import com.doduohor.repository.postgres.PostgresFacilityRepository
 import com.doduohor.repository.postgres.PostgresIncidentRepository
@@ -35,7 +35,6 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 

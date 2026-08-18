@@ -3,7 +3,7 @@ package com.doduohor.repository.postgres
 import com.doduohor.domain.model.Booking
 import com.doduohor.domain.model.BookingStatus
 import com.doduohor.domain.model.BookingTimeInterval
-import com.doduohor.infrastructure.database.BookingTable
+import com.doduohor.infrastructure.database.postgres.BookingTable
 import com.doduohor.repository.BookingRepository
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and

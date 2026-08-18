@@ -2,6 +2,7 @@ package com.doduohor.events
 
 import com.doduohor.domain.model.EquipmentType
 import com.doduohor.domain.model.FacilityType
+import com.doduohor.infrastructure.messaging.MessagePublisher
 import com.doduohor.service.IncidentPolicy
 import com.doduohor.service.IncidentService
 import com.doduohor.service.MeasurementService
@@ -24,6 +25,14 @@ import kotlin.test.assertNull
 
 class MonitoringServiceEventTest {
 
+    private class FakeMessagePublisher: MessagePublisher{
+        val messages = mutableListOf<String>()
+
+        override fun publish(message: String){
+            messages.add(message)
+        }
+    }
+
     @Test
     fun `successful measurement creation publishes measurement created event`() = runTest {
         val facilityRepository = InMemoryFacilityRepository()
@@ -37,13 +46,15 @@ class MonitoringServiceEventTest {
             equipmentRepository,
             InMemoryIncidentRepository()
         )
+        val messagePublisher = FakeMessagePublisher()
         val eventPublisher = EventPublisher()
         val monitoringService = MonitoringService(
             measurementService,
             incidentService,
             equipmentRepository,
             IncidentPolicy(),
-            eventPublisher
+            eventPublisher,
+            messagePublisher
         )
 
         val equipment = equipmentRepository.create(
@@ -87,13 +98,15 @@ class MonitoringServiceEventTest {
         val facility = facilityRepository.create("Central Pool", FacilityType.POOL)
         val equipmentRepository = InMemoryEquipmentRepository()
         val incidentRepository = InMemoryIncidentRepository()
+        val messagePublisher = FakeMessagePublisher()
         val eventPublisher = EventPublisher()
         val monitoringService = MonitoringService(
             MeasurementService(InMemoryMeasurementRepository(), equipmentRepository),
             IncidentService(facilityRepository, equipmentRepository, incidentRepository),
             equipmentRepository,
             IncidentPolicy(),
-            eventPublisher
+            eventPublisher,
+            messagePublisher
         )
         val equipment = equipmentRepository.create(
             facilityId = facility.id,
@@ -132,7 +145,7 @@ class MonitoringServiceEventTest {
             incidentEvent.data.jsonObject["type"]?.jsonPrimitive?.content
         )
         assertEquals(
-            "high",
+            "HIGH",
             incidentEvent.data.jsonObject["severity"]?.jsonPrimitive?.content
         )
     }
@@ -141,6 +154,7 @@ class MonitoringServiceEventTest {
     fun `invalid measurement creation does not publish event`() = runTest {
         val facilityRepository = InMemoryFacilityRepository()
         val equipmentRepository = InMemoryEquipmentRepository()
+        val messagePublisher = FakeMessagePublisher()
         val eventPublisher = EventPublisher()
         val monitoringService = MonitoringService(
             MeasurementService(InMemoryMeasurementRepository(), equipmentRepository),
@@ -151,7 +165,8 @@ class MonitoringServiceEventTest {
             ),
             equipmentRepository,
             IncidentPolicy(),
-            eventPublisher
+            eventPublisher,
+            messagePublisher
         )
         val channel = eventPublisher.subscribe()
 

@@ -1,7 +1,6 @@
 .git
 .gradle
 .idea
-build
 docker-data
 data
 tmp

@@ -6,6 +6,9 @@ import com.doduohor.events.EventPublisher
 import com.doduohor.events.ServerEvent
 import com.doduohor.events.ServerEventType
 import com.doduohor.events.toEventPayload
+import com.doduohor.infrastructure.messaging.MessagePublisher
+import com.doduohor.infrastructure.messaging.RabbitMqEvent
+import com.doduohor.infrastructure.messaging.RabbitMqEventType
 import com.doduohor.repository.EquipmentRepository
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
@@ -16,11 +19,11 @@ class MonitoringService(
     private val incidentService: IncidentService,
     private val equipmentRepository: EquipmentRepository,
     private val incidentPolicy: IncidentPolicy,
-    private val eventPublisher: EventPublisher
+    private val eventPublisher: EventPublisher,
+    private val messagePublisher : MessagePublisher
 ){
     suspend fun processMeasurement(equipmentId: Long, type: String, unit: String, value: Double): MonitoringServiceResult{
-        val measurementResult = measurementService.create(equipmentId, type, unit, value)
-        val measurement = when(measurementResult){
+        val measurement = when(val measurementResult = measurementService.create(equipmentId, type, unit, value)){
             is CreateMeasurementResult.Success -> measurementResult.measurement
             else -> return MonitoringServiceResult.MeasurementCreateError(measurementResult)
         }
@@ -30,12 +33,17 @@ class MonitoringService(
             createdAt = Instant.now()
         )
         eventPublisher.publish(event)
+        val rabbitMqEvent = RabbitMqEvent.create(
+            eventType = RabbitMqEventType.MEASUREMENT_CREATED,
+            data = Json.encodeToJsonElement(measurement.toEventPayload())
+        )
+        messagePublisher.publish(Json.encodeToString(rabbitMqEvent))
+
         return when(val incidentPolicy = incidentPolicy.detect(measurement)){
             is IncidentPolicyResult.NeedIncident -> createIncident(measurement, incidentPolicy.incidentRequired)
             IncidentPolicyResult.NotIncident -> MonitoringServiceResult.SuccessWithoutIncident(measurement)
         }
     }
-
 
     private suspend fun createIncident(measurement: Measurement, incidentRequired: IncidentRequired): MonitoringServiceResult{
         val equipment = equipmentRepository.findByEquipmentId(measurement.equipmentId) ?:
@@ -60,8 +68,14 @@ class MonitoringService(
             data = Json.encodeToJsonElement(incident.toEventPayload()),
             createdAt = Instant.now()
         )
-
         eventPublisher.publish(event)
+
+        val rabbitMqEvent = RabbitMqEvent.create(
+            eventType = RabbitMqEventType.INCIDENT_CREATED,
+            data = Json.encodeToJsonElement(incident.toEventPayload())
+        )
+
+        messagePublisher.publish(Json.encodeToString(rabbitMqEvent))
 
         return MonitoringServiceResult.SuccessWithIncident(measurement,incident)
 

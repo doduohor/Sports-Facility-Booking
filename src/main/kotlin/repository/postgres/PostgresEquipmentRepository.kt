@@ -3,7 +3,7 @@ package com.doduohor.repository.postgres
 import com.doduohor.domain.model.Equipment
 import com.doduohor.domain.model.EquipmentStatus
 import com.doduohor.domain.model.EquipmentType
-import com.doduohor.infrastructure.database.EquipmentTable
+import com.doduohor.infrastructure.database.postgres.EquipmentTable
 import com.doduohor.repository.EquipmentRepository
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq

@@ -1,5 +1,6 @@
 package com.doduohor.events
 
+import com.doduohor.domain.model.IncidentSeverity
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -9,7 +10,7 @@ data class IncidentEventPayload(
     val equipmentId: Long,
     val measurementId: Long,
     val type: String,
-    val severity: String,
+    val severity: IncidentSeverity,
     val status: String,
     val measurementType: String,
     val measurementUnit: String,

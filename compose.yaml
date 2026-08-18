@@ -2,6 +2,7 @@ services:
   api:
     build:
       context: .
+      dockerfile: Dockerfile.runtime
     ports:
       - "${API_PORT}:8080"
     environment:
@@ -9,9 +10,29 @@ services:
       DATABASE_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
       DATABASE_USER: "${POSTGRES_USER}"
       DATABASE_PASSWORD: "${POSTGRES_PASSWORD}"
+      RABBIT_HOST: "${RABBIT_HOST}"
+      RABBIT_PORT: "5672"
+      RABBIT_USER: "${RABBIT_USER}"
+      RABBIT_PASSWORD: "${RABBIT_PASSWORD}"
+      RABBIT_EXCHANGE: "${RABBIT_EXCHANGE}"
+      RABBIT_QUEUE: "${RABBIT_QUEUE}"
+      RABBIT_ROUTING_KEY: "${RABBIT_ROUTING_KEY}"
+      RABBIT_EXCHANGE_DLQ: "${RABBIT_EXCHANGE_DLQ}"
+      RABBIT_QUEUE_DLQ: "${RABBIT_QUEUE_DLQ}"
+      RABBIT_ROUTING_KEY_DLQ: "${RABBIT_ROUTING_KEY_DLQ}"
+      MONGO_HOST: "mongo"
+      MONGO_PORT: "27017"
+      MONGO_USERNAME: "${MONGO_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_ROOT_PASSWORD}"
+      MONGO_DATABASE: "${MONGO_DATABASE}"
     depends_on:
       postgres:
         condition: service_healthy
+      rabbit:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+
 
   postgres:
     image: postgres:17-alpine
@@ -29,5 +50,65 @@ services:
       timeout: 5s
       retries: 10
 
+  rabbit:
+    image: rabbitmq:4.3.4-management-alpine
+    ports:
+      - "${RABBIT_PORT}:5672"
+      - "${RABBIT_MANAGEMENT_PORT}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBIT_USER}"
+      RABBITMQ_DEFAULT_PASS: "${RABBIT_PASSWORD}"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: [ "CMD-SHELL", "rabbitmq-diagnostics -q check_port_connectivity" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    entrypoint: ["java", "-cp", "/app/app.jar", "com.doduohor.worker.WorkerMainKt"]
+    environment:
+      RABBIT_HOST: "${RABBIT_HOST}"
+      RABBIT_PORT: "5672"
+      RABBIT_USER: "${RABBIT_USER}"
+      RABBIT_PASSWORD: "${RABBIT_PASSWORD}"
+      RABBIT_EXCHANGE: "${RABBIT_EXCHANGE}"
+      RABBIT_QUEUE: "${RABBIT_QUEUE}"
+      RABBIT_ROUTING_KEY: "${RABBIT_ROUTING_KEY}"
+      RABBIT_EXCHANGE_DLQ: "${RABBIT_EXCHANGE_DLQ}"
+      RABBIT_QUEUE_DLQ: "${RABBIT_QUEUE_DLQ}"
+      RABBIT_ROUTING_KEY_DLQ: "${RABBIT_ROUTING_KEY_DLQ}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
+      MONGO_HOST: "mongo"
+      MONGO_PORT: "27017"
+      MONGO_USERNAME: "${MONGO_ROOT_USERNAME}"
+      MONGO_PASSWORD: "${MONGO_ROOT_PASSWORD}"
+      MONGO_DATABASE: "${MONGO_DATABASE}"
+    depends_on:
+      rabbit:
+        condition: service_healthy
+
+  mongo:
+    image: mongodb/mongodb-atlas-local
+    ports:
+      - "${MONGO_PORT}:27017"
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USERNAME}"
+      MONGODB_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD}"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+      - mongodb_mongot:/data/mongot
+
+
 volumes:
   postgres_data:
+  rabbitmq_data:
+  mongodb_data:
+  mongodb_config:
+  mongodb_mongot:

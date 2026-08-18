@@ -9,7 +9,7 @@ fun Incident.toEventPayload(): IncidentEventPayload{
         equipmentId = this.equipmentId,
         measurementId = this.measurementId,
         type = this.type.name.lowercase(),
-        severity = this.severity.name.lowercase(),
+        severity = this.severity,
         status = this.status.name.lowercase(),
         measurementType = this.measurementType.name.lowercase(),
         measurementUnit = this.measurementUnit.name.lowercase(),

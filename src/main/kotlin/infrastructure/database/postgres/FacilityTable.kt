@@ -1,4 +1,4 @@
-package com.doduohor.infrastructure.database
+package com.doduohor.infrastructure.database.postgres
 
 import org.jetbrains.exposed.v1.core.Table
 

@@ -1,6 +1,6 @@
 package com.doduohor
 
-import com.doduohor.infrastructure.database.FacilityTable
+import com.doduohor.infrastructure.database.postgres.FacilityTable
 import com.doduohor.domain.model.Facility
 import com.doduohor.domain.model.FacilityActivateResult
 import com.doduohor.domain.model.FacilityStatus

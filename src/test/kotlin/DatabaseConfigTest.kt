@@ -1,6 +1,6 @@
 package com.doduohor
 
-import com.doduohor.infrastructure.database.DatabaseConfig
+import com.doduohor.infrastructure.database.postgres.DatabaseConfig
 import io.ktor.server.config.MapApplicationConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals

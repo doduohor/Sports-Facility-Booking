@@ -1,5 +1,7 @@
 package com.doduohor
 
+import com.doduohor.di.configureKoin
+import com.doduohor.infrastructure.messaging.MessagePublisher
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -11,6 +13,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.application.Application
 import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.readLine
@@ -22,18 +25,21 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ProductionModuleTest {
+    private class FakeMessagePublisher : MessagePublisher {
+        val messages = mutableListOf<String>()
+
+        override fun publish(message: String) {
+            messages.add(message)
+        }
+    }
 
     @Test
     fun `production module starts and serves endpoints through koin`() = testApplication {
         environment {
-            config = MapApplicationConfig(
-                "security.basic.username" to "admin",
-                "security.basic.password" to "admin",
-                "database.enabled" to "false"
-            )
+            config = testConfig()
         }
         application {
-            module()
+            testModule()
         }
 
         val healthResponse = client.get("/health")
@@ -79,14 +85,10 @@ class ProductionModuleTest {
     @Test
     fun `production module serves connected sse event`() = testApplication {
         environment {
-            config = MapApplicationConfig(
-                "security.basic.username" to "admin",
-                "security.basic.password" to "admin",
-                "database.enabled" to "false"
-            )
+            config = testConfig()
         }
         application {
-            module()
+            testModule()
         }
 
         client.prepareGet("/api/events/stream").execute { response ->
@@ -112,14 +114,10 @@ class ProductionModuleTest {
     @Test
     fun `sse stream receives measurement and incident events`() = testApplication {
         environment {
-            config = MapApplicationConfig(
-                "security.basic.username" to "admin",
-                "security.basic.password" to "admin",
-                "database.enabled" to "false"
-            )
+            config = testConfig()
         }
         application {
-            module()
+            testModule()
         }
 
         val facilityResponse = client.post("/api/facilities") {
@@ -214,4 +212,31 @@ class ProductionModuleTest {
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
             ?: error("Response does not contain numeric field '$fieldName': $body")
     }
+
+    private fun Application.testModule() {
+        configureKoin(null, FakeMessagePublisher())
+        configureCors()
+        configureSSE()
+        configureSerialization()
+        configureStatusPages()
+        configureLogging()
+        configureSecurity()
+        configureRouting()
+    }
+
+    private fun testConfig() = MapApplicationConfig(
+        "security.basic.username" to "admin",
+        "security.basic.password" to "admin",
+        "database.enabled" to "false",
+        "rabbitmq.host" to "localhost",
+        "rabbitmq.port" to "5672",
+        "rabbitmq.username" to "guest",
+        "rabbitmq.password" to "guest",
+        "rabbitmq.exchange" to "sports.events",
+        "rabbitmq.queue" to "sports.measurements",
+        "rabbitmq.routingKey" to "measurement.created",
+        "rabbitmq.deadLetterExchange" to "sports.events.dlq",
+        "rabbitmq.deadLetterQueue" to "sports.measurements.dlq",
+        "rabbitmq.deadLetterRoutingKey" to "measurement.created.dlq"
+    )
 }

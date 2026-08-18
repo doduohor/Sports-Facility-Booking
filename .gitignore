@@ -38,3 +38,5 @@ data/
 tmp/
 bin/
 graphify-out/
+.planning/
+.understand-anything
