@@ -18,6 +18,9 @@ import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.decodeFromString
+import com.doduohor.api.dto.ErrorResponse
 
 class ServerTest {
     private companion object {
@@ -106,7 +109,7 @@ class ServerTest {
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
-        assertEquals("400", Regex("\\\"code\\\"\\s*:\\s*(\\d+)").find(response.bodyAsText())?.groupValues?.get(1))
+        assertEquals(ErrorResponse(400, "invalidRequest", "The request body is invalid"), Json.decodeFromString(response.bodyAsText()))
     }
 
     @Test
@@ -169,6 +172,26 @@ class ServerTest {
             "/api/equipments" to "{\"facilityId\":\"one\"}",
             "/api/measurements" to "{\"equipmentId\":\"one\"}",
             "/api/incidents" to "{\"facilityId\":\"one\"}"
+        )
+
+        requests.forEach { (path, body) ->
+            val response = client.post(path) {
+                basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+    }
+
+    @Test
+    fun `unknown enum values are rejected by every JSON resource`() = testApplication {
+        configureTestApplication()
+        val requests = listOf(
+            "/api/facilities" to "{\"name\":\"Central Pool\",\"type\":\"\"}",
+            "/api/equipments" to "{\"facilityId\":1,\"name\":\"Sensor\",\"type\":\"UNKNOWN\"}",
+            "/api/measurements" to "{\"equipmentId\":1,\"type\":\"UNKNOWN\",\"unit\":\"CELSIUS\",\"value\":1}",
+            "/api/incidents" to "{\"facilityId\":1,\"equipmentId\":1,\"measurementId\":1,\"type\":\"UNKNOWN\",\"severity\":\"HIGH\",\"measurementType\":\"CO2\",\"measurementUnit\":\"PPM\",\"value\":1}"
         )
 
         requests.forEach { (path, body) ->
@@ -530,6 +553,7 @@ class ServerTest {
             Triple("2026-07-28", "not-a-time", "12:00"),
             Triple("2026-07-28", "12:00", "12:00"),
             Triple("2026-07-28", "13:00", "12:00"),
+            Triple("2026-07-28", "10:00+03:00", "12:00"),
             Triple("2026-07-28", "10:00", "22:01")
         )
 
@@ -555,6 +579,24 @@ class ServerTest {
                 setBody(body)
             }
             assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+    }
+
+    @Test
+    fun `measurement accepts and rejects numeric range boundaries through HTTP`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        val equipment = createEquipment(1, "Thermometer", "HEATING")
+        val equipmentId = extractLongField(equipment.bodyAsText(), "id")
+
+        listOf(-50.0, 100.0).forEach { value ->
+            assertEquals(HttpStatusCode.Created, createMeasurement(equipmentId, "TEMPERATURE", "CELSIUS", value).status)
+        }
+        listOf(-50.1, 100.1).forEach { value ->
+            assertJsonError(
+                createMeasurement(equipmentId, "TEMPERATURE", "CELSIUS", value),
+                HttpStatusCode.BadRequest
+            )
         }
     }
 
