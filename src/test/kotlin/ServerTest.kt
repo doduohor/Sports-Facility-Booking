@@ -4,6 +4,7 @@ import com.doduohor.di.configureTestKoin
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
@@ -91,6 +92,132 @@ class ServerTest {
         }
 
         assertEquals(HttpStatusCode.Unauthorized, response.status)
+    }
+
+    @Test
+    fun `malformed JSON returns a stable JSON error`() = testApplication {
+        configureTestApplication()
+
+        val response = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            contentType(ContentType.Application.Json)
+            setBody("{\"name\":\"Central Pool\",")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
+        assertEquals("400", Regex("\\\"code\\\"\\s*:\\s*(\\d+)").find(response.bodyAsText())?.groupValues?.get(1))
+    }
+
+    @Test
+    fun `all JSON write endpoints reject malformed JSON with the same contract`() = testApplication {
+        configureTestApplication()
+        val requests = listOf(
+            "/api/facilities" to "{",
+            "/api/bookings" to "{",
+            "/api/equipments" to "{",
+            "/api/measurements" to "{",
+            "/api/incidents" to "{",
+            "/api/facilities" to ""
+        )
+
+        requests.forEach { (path, body) ->
+            val response = client.post(path) {
+                basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+    }
+
+    @Test
+    fun `missing and extra JSON fields are rejected`() = testApplication {
+        configureTestApplication()
+        val requests = listOf(
+            "/api/facilities" to "{\"name\":\"Central Pool\"}",
+            "/api/bookings" to "{}",
+            "/api/equipments" to "{}",
+            "/api/measurements" to "{}",
+            "/api/incidents" to "{}"
+        )
+
+        requests.forEach { (path, body) ->
+            val response = client.post(path) {
+                basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+
+        val extraField = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            contentType(ContentType.Application.Json)
+            setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\",\"status\":\"ACTIVE\"}")
+        }
+        assertJsonError(extraField, HttpStatusCode.BadRequest)
+    }
+
+    @Test
+    fun `array null and wrong scalar JSON values are rejected for every write resource`() = testApplication {
+        configureTestApplication()
+        val requests = listOf(
+            "/api/facilities" to "{\"name\":null,\"type\":\"POOL\"}",
+            "/api/bookings" to "[]",
+            "/api/equipments" to "{\"facilityId\":\"one\"}",
+            "/api/measurements" to "{\"equipmentId\":\"one\"}",
+            "/api/incidents" to "{\"facilityId\":\"one\"}"
+        )
+
+        requests.forEach { (path, body) ->
+            val response = client.post(path) {
+                basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+    }
+
+    @Test
+    fun `unsupported content type and accept return JSON errors`() = testApplication {
+        configureTestApplication()
+
+        val contentTypeResponse = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            contentType(ContentType.Text.Plain)
+            setBody("name=Central Pool&type=POOL")
+        }
+        assertJsonError(contentTypeResponse, HttpStatusCode.UnsupportedMediaType)
+
+        val missingContentTypeResponse = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\"}")
+        }
+        assertJsonError(missingContentTypeResponse, HttpStatusCode.UnsupportedMediaType)
+
+        val acceptResponse = client.post("/api/facilities") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            header("Accept", "application/xml")
+            contentType(ContentType.Application.Json)
+            setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\"}")
+        }
+        assertJsonError(acceptResponse, HttpStatusCode.NotAcceptable)
+    }
+
+    @Test
+    fun `activate facility rejects an unexpected request body`() = testApplication {
+        configureTestApplication()
+
+        val response = client.put("/api/facilities/1/activate") {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            contentType(ContentType.Application.Json)
+            setBody("[]")
+        }
+
+        assertJsonError(response, HttpStatusCode.BadRequest)
     }
 
     @Test
@@ -389,6 +516,46 @@ class ServerTest {
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(body.contains("invalidTimeInterval"))
+    }
+
+    @Test
+    fun `booking rejects invalid dates times equal boundaries and unsupported duration`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        activateFacility(1)
+        assertEquals(HttpStatusCode.Created, createBooking(1, 900, "2026-07-29", "10:00", "11:00").status)
+        assertEquals(HttpStatusCode.Created, createBooking(1, 901, "2026-07-30", "10:00", "22:00").status)
+        val requests = listOf(
+            Triple("2026-02-30", "10:00", "12:00"),
+            Triple("2026-07-28", "not-a-time", "12:00"),
+            Triple("2026-07-28", "12:00", "12:00"),
+            Triple("2026-07-28", "13:00", "12:00"),
+            Triple("2026-07-28", "10:00", "22:01")
+        )
+
+        requests.forEach { (date, start, end) ->
+            val response = createBooking(1, 900, bookingDate = date, startTime = start, endTime = end)
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
+    }
+
+    @Test
+    fun `measurement rejects non finite JSON numbers`() = testApplication {
+        configureTestApplication()
+        val bodies = listOf(
+            "{\"equipmentId\":1,\"type\":\"TEMPERATURE\",\"unit\":\"CELSIUS\",\"value\":NaN}",
+            "{\"equipmentId\":1,\"type\":\"TEMPERATURE\",\"unit\":\"CELSIUS\",\"value\":Infinity}",
+            "{\"equipmentId\":1,\"type\":\"TEMPERATURE\",\"unit\":\"CELSIUS\",\"value\":-Infinity}"
+        )
+
+        bodies.forEach { body ->
+            val response = client.post("/api/measurements") {
+                basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            assertJsonError(response, HttpStatusCode.BadRequest)
+        }
     }
 
     @Test
@@ -1089,6 +1256,15 @@ class ServerTest {
         val pattern = Regex(""""$fieldName"\s*:\s*(\d+)""")
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
             ?: error("Response does not contain numeric field '$fieldName': $body")
+    }
+
+    private suspend fun assertJsonError(response: io.ktor.client.statement.HttpResponse, status: HttpStatusCode) {
+        val body = response.bodyAsText()
+        assertEquals(status, response.status, body)
+        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters(), body)
+        assertTrue(body.contains("\"code\""), body)
+        assertTrue(body.contains("\"name\""), body)
+        assertTrue(body.contains("\"text\""), body)
     }
 
     private fun ApplicationTestBuilder.configureTestApplication() {

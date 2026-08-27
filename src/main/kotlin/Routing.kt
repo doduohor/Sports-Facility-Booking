@@ -41,6 +41,7 @@ import com.doduohor.service.MeasurementService
 import com.doduohor.service.MonitoringService
 import com.doduohor.service.MonitoringServiceResult
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.HttpHeaders
 import io.ktor.server.application.*
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
@@ -152,6 +153,13 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
 
     authenticate("auth-basic") {
         put("/api/facilities/{facilityId}/activate") {
+            if ((call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0L) > 0L) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "unexpectedRequestBody", "This endpoint does not accept a request body")
+                )
+                return@put
+            }
             val facilityId = call.parameters["facilityId"]?.toLongOrNull()
 
             if (facilityId == null) {
