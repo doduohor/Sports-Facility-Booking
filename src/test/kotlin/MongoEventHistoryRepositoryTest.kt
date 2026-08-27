@@ -8,6 +8,7 @@ import com.doduohor.repository.mongo.MarkProcessedResult
 import com.doduohor.repository.mongo.MarkStartProcessingResult
 import com.doduohor.infrastructure.database.mongo.MongoConfig
 import com.doduohor.infrastructure.database.mongo.MongoFactory
+import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -21,7 +22,6 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.mongodb.MongoDBContainer
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -29,6 +29,8 @@ import java.time.Instant
 
 @Testcontainers
 class MongoEventHistoryRepositoryTest {
+    private val fixedInstant = Instant.parse("2026-08-20T12:00:00Z")
+    private val fixedClock = FixedClock(fixedInstant)
 
     companion object {
         @Container
@@ -61,7 +63,7 @@ class MongoEventHistoryRepositoryTest {
     }
 
     private val repository: MongoEventHistoryRepository
-        get() = MongoEventHistoryRepository(connection.database)
+        get() = MongoEventHistoryRepository(connection.database, fixedClock)
 
     @BeforeEach
     fun clearCollection() = runBlocking {
@@ -96,7 +98,7 @@ class MongoEventHistoryRepositoryTest {
         assertEquals(EventHistoryStatus.PROCESSING, savedEvent.status)
         assertEquals(1, savedEvent.attempt)
         assertNull(savedEvent.processedAt)
-        assertNotNull(savedEvent.processingStartedAt)
+        assertEquals(fixedInstant.toString(), savedEvent.processingStartedAt)
         assertNull(savedEvent.errorMessage)
     }
 
@@ -165,7 +167,7 @@ class MongoEventHistoryRepositoryTest {
                 id = 1,
                 type = "INCIDENT_CREATED",
                 status = EventHistoryStatus.PROCESSING,
-                processingStartedAt = Instant.now().toString()
+                processingStartedAt = fixedInstant.toString()
             )
         )
 
@@ -183,7 +185,7 @@ class MongoEventHistoryRepositoryTest {
                 id = 1,
                 type = "INCIDENT_CREATED",
                 status = EventHistoryStatus.PROCESSING,
-                processingStartedAt = Instant.now()
+                processingStartedAt = fixedInstant
                     .minusSeconds(EventProcessingPolicy.PROCESSING_TIMEOUT_SECONDS + 1)
                     .toString()
             )
@@ -196,7 +198,7 @@ class MongoEventHistoryRepositoryTest {
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.PROCESSING, savedEvent.status)
         assertEquals(2, savedEvent.attempt)
-        assertTrue(savedEvent.processingStartedAt != null)
+        assertEquals(fixedInstant.toString(), savedEvent.processingStartedAt)
         Unit
     }
 
@@ -213,7 +215,7 @@ class MongoEventHistoryRepositoryTest {
         assertEquals(MarkProcessedResult.Updated, result)
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
-        assertNotNull(savedEvent.processedAt)
+        assertEquals(fixedInstant.toString(), savedEvent.processedAt)
         assertNull(savedEvent.errorMessage)
     }
 
@@ -252,7 +254,7 @@ class MongoEventHistoryRepositoryTest {
         assertEquals(MarkFailedResult.Updated, result)
         assertNotNull(savedEvent)
         assertEquals(EventHistoryStatus.FAILED, savedEvent.status)
-        assertNotNull(savedEvent.processedAt)
+        assertEquals(fixedInstant.toString(), savedEvent.processedAt)
         assertEquals("telegram error", savedEvent.errorMessage)
     }
 

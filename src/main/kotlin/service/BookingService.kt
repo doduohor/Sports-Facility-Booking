@@ -1,31 +1,37 @@
 package com.doduohor.service
 
 import com.doduohor.domain.model.Booking
+import com.doduohor.domain.model.BookingCreationResult
 import com.doduohor.domain.model.BookingTimeInterval
-import com.doduohor.domain.model.canBeBooked
+import com.doduohor.domain.policy.BookingPolicy
+import com.doduohor.infrastructure.time.TimeProvider
 import com.doduohor.repository.BookingRepository
 import com.doduohor.repository.FacilityRepository
+import com.doduohor.domain.shared.BookingId
+import com.doduohor.domain.shared.CustomerId
+import com.doduohor.domain.shared.FacilityId
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.ZoneId
 import java.time.format.DateTimeParseException
 
 class BookingService(private val bookingRepository: BookingRepository, private val facilityRepository: FacilityRepository) {
-    private val bookingZoneId = ZoneId.of("Europe/Moscow")
+    private val bookingZoneId = TimeProvider.zoneId
 
     fun createBooking(facilityId: Long, customerId: Int, startTime: String, endTime: String, bookingDate: String): CreateBookingResult {
         if (facilityId <= 0) {
             return CreateBookingResult.InvalidFacilityId
         }
 
-        if (customerId !in 900..1000) {
+        val customerIdShared = CustomerId(customerId)
+
+        if (!BookingPolicy.isValidCustomerId(customerIdShared)) {
             return CreateBookingResult.InvalidCustomerId
         }
 
-        val facility = facilityRepository.findById(facilityId) ?: return CreateBookingResult.NotFindFacilityId
+        val facility = facilityRepository.findById(FacilityId(facilityId)) ?: return CreateBookingResult.NotFindFacilityId
 
-        if (!facility.canBeBooked()) {
+        if (!facility.canAcceptBooking()) {
             return CreateBookingResult.InvalidStatusFacilityId
         }
 
@@ -43,16 +49,15 @@ class BookingService(private val bookingRepository: BookingRepository, private v
             return CreateBookingResult.InvalidTimeInterval
         }
 
-        val checkInterval = bookingRepository.findOverlappingByFacilityId(facility.id, interval)
-        if(checkInterval)
-            return CreateBookingResult.UnavailableRangeTimeLimit
-
-        val booking = bookingRepository.create(facility.id, customerId, interval)
-        return CreateBookingResult.Success(booking)
+        return when(val booking = bookingRepository.createIfAvailable(facility.id, customerIdShared, interval)){
+            is BookingCreationResult.Success -> CreateBookingResult.Success(booking.value)
+            BookingCreationResult.UnavailableRange -> CreateBookingResult.UnavailableRangeTimeLimit
+        }
     }
 
     fun findByBookingId(id: Long): Booking? {
-        return bookingRepository.findByBookingId(id)
+        if (id <= 0) return null
+        return bookingRepository.findByBookingId(BookingId(id))
     }
 
     fun findByFacilityId(id: Long): FindByFacilityResult {
@@ -60,7 +65,7 @@ class BookingService(private val bookingRepository: BookingRepository, private v
             return FindByFacilityResult.InvalidFacilityId
         }
 
-        val facility = facilityRepository.findById(id) ?: return FindByFacilityResult.NotFindFacilityId
+        val facility = facilityRepository.findById(FacilityId(id)) ?: return FindByFacilityResult.NotFindFacilityId
         return FindByFacilityResult.Success(bookingRepository.findByFacilityId(facility.id))
     }
 

@@ -1,6 +1,6 @@
 package com.doduohor
 
-import com.doduohor.di.configureKoin
+import com.doduohor.di.configureTestKoin
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
@@ -214,7 +214,7 @@ class ProductionModuleTest {
     }
 
     private fun Application.testModule() {
-        configureKoin(null, FakeMessagePublisher())
+        configureTestKoin(FakeMessagePublisher())
         configureCors()
         configureSSE()
         configureSerialization()

@@ -1,0 +1,126 @@
+package com.doduohor.worker
+
+import com.doduohor.events.ExpandAttemptResult
+import com.doduohor.events.IntegrationEventType
+import com.doduohor.events.MakeAsPublishedResult
+import com.doduohor.events.NewOutboxEvents
+import com.doduohor.events.OutboxEventStatus
+import com.doduohor.events.OutboxEvents
+import com.doduohor.events.OutboxEventsRepository
+import com.doduohor.events.SaveErrorResult
+import com.doduohor.events.SaveEventResult
+import com.doduohor.events.StartPublishingResult
+import com.doduohor.infrastructure.messaging.MessagePublisher
+import com.doduohor.infrastructure.messaging.RabbitMqEvent
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.uuid.Uuid
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+
+class OutboxPublisherTest {
+    @Test
+    fun `successful publishing sends json and marks event as published`() {
+        val event = event()
+        val repository = FakeOutboxRepository(event)
+        val publisher = FakeMessagePublisher()
+
+        OutboxPublisher(repository, publisher).publishMessage()
+
+        val message = publisher.messages.singleOrNull()
+        assertNotNull(message)
+        val rabbitEvent = Json.decodeFromString<RabbitMqEvent>(message)
+        assertEquals(event.eventId.toString(), rabbitEvent.eventId)
+        assertEquals(IntegrationEventType.MEASUREMENT_CREATED, rabbitEvent.eventType)
+        assertEquals(event.payload, rabbitEvent.data)
+        assertTrue(repository.markedPublished)
+        assertFalse(repository.savedError)
+    }
+
+    @Test
+    fun `publishing failure saves error and does not mark event as published`() {
+        val event = event()
+        val repository = FakeOutboxRepository(event)
+        val publisher = FakeMessagePublisher(failure = IllegalStateException("Rabbit unavailable"))
+
+        OutboxPublisher(repository, publisher).publishMessage()
+
+        assertFalse(repository.markedPublished)
+        assertTrue(repository.savedError)
+        assertEquals("Rabbit unavailable", repository.savedErrorMessage)
+    }
+
+    @Test
+    fun `event is skipped when publishing cannot be started`() {
+        val event = event()
+        val repository = FakeOutboxRepository(event, startResult = StartPublishingResult.AlreadyProcessing)
+        val publisher = FakeMessagePublisher()
+
+        OutboxPublisher(repository, publisher).publishMessage()
+
+        assertTrue(publisher.messages.isEmpty())
+        assertFalse(repository.markedPublished)
+        assertFalse(repository.savedError)
+    }
+
+    private fun event(): OutboxEvents = OutboxEvents(
+        id = 1,
+        eventId = Uuid.random(),
+        eventType = IntegrationEventType.MEASUREMENT_CREATED,
+        payload = buildJsonObject {
+            put("id", 1)
+            put("value", 24.5)
+        },
+        status = OutboxEventStatus.NEW,
+        createdAt = OffsetDateTime.of(2026, 8, 19, 12, 0, 0, 0, ZoneOffset.UTC),
+        publishedAt = null,
+        attempt = 0,
+        errorMessage = null
+    )
+
+    private class FakeMessagePublisher(
+        private val failure: Exception? = null
+    ) : MessagePublisher {
+        val messages = mutableListOf<String>()
+
+        override fun publish(message: String) {
+            failure?.let { throw it }
+            messages += message
+        }
+    }
+
+    private class FakeOutboxRepository(
+        private val event: OutboxEvents,
+        private val startResult: StartPublishingResult = StartPublishingResult.Started
+    ) : OutboxEventsRepository {
+        var markedPublished = false
+        var savedError = false
+        var savedErrorMessage: String? = null
+
+        override fun saveEvent(event: NewOutboxEvents): SaveEventResult = SaveEventResult.Success
+
+        override fun findUnprocessedEvents(): List<OutboxEvents> = listOf(event)
+
+        override fun tryStartPublishing(eventId: Uuid): StartPublishingResult = startResult
+
+        override fun makeAsPublished(eventId: Uuid): MakeAsPublishedResult {
+            markedPublished = true
+            return MakeAsPublishedResult.Success
+        }
+
+        override fun expandAttempt(eventId: Uuid): ExpandAttemptResult = ExpandAttemptResult.Success
+
+        override fun saveError(eventId: Uuid, error: String): SaveErrorResult {
+            savedError = true
+            savedErrorMessage = error
+            return SaveErrorResult.Success
+        }
+    }
+}

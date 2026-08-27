@@ -1,5 +1,9 @@
 package com.doduohor.domain.model
 
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.FacilityId
+import com.doduohor.domain.shared.MeasurementId
+import com.doduohor.domain.shared.IncidentId
 import java.time.Instant
 
 enum class IncidentType{
@@ -8,13 +12,23 @@ enum class IncidentType{
     HIGH_TEMPERATURE,          // Повышенная температура
     LOW_TEMPERATURE,           // Пониженная температура
     HIGH_HUMIDITY,             // Повышенная влажность
-    LOW_HUMIDITY               // Пониженная влажность
+    LOW_HUMIDITY;              // Пониженная влажность
+
+    companion object {
+        fun fromString(value: String): IncidentType? =
+            entries.firstOrNull { it.name.equals(value.trim(), true) }
+    }
  }
 
 enum class IncidentSeverity{
     MEDIUM,
     HIGH,
-    CRITICAL
+    CRITICAL;
+
+    companion object {
+        fun fromString(value: String): IncidentSeverity? =
+            entries.firstOrNull { it.name.equals(value.trim(), true) }
+    }
 }
 
 enum class IncidentStatus{
@@ -27,10 +41,10 @@ enum class IncidentStatus{
 }
 
 data class Incident(
-    val id: Long,
-    val facilityId: Long,
-    val equipmentId: Long,
-    val measurementId: Long,
+    val id: IncidentId,
+    val facilityId: FacilityId,
+    val equipmentId: EquipmentId,
+    val measurementId: MeasurementId,
     val type: IncidentType,
     val severity: IncidentSeverity,
     val status: IncidentStatus,

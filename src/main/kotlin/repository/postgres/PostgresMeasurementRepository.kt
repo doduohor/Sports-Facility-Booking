@@ -1,57 +1,58 @@
 package com.doduohor.repository.postgres
 
 import com.doduohor.domain.model.Measurement
+import com.doduohor.domain.model.MeasurementReading
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.shared.Clock
 import com.doduohor.infrastructure.database.postgres.MeasurementTable
 import com.doduohor.repository.MeasurementRepository
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.MeasurementId
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import java.time.Instant
-import java.time.temporal.ChronoUnit
 
-class PostgresMeasurementRepository(private val database: Database) : MeasurementRepository {
+class PostgresMeasurementRepository(
+    private val database: Database,
+    private val clock: Clock
+    ) : MeasurementRepository {
     override fun create(
-        equipmentId: Long,
-        type: MeasurementType,
-        unit: MeasurementUnit,
-        value: Double
+        equipmentId: EquipmentId,
+        measurementReading: MeasurementReading
     ): Measurement = transaction(database) {
-        val createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val createdAt = clock.now()
         val insertedRow = MeasurementTable.insert {
-            it[MeasurementTable.equipmentId] = equipmentId
-            it[MeasurementTable.type] = type.name
-            it[MeasurementTable.unit] = unit.name
-            it[MeasurementTable.value] = value
+            it[MeasurementTable.equipmentId] = equipmentId.value
+            it[MeasurementTable.type] = measurementReading.type.name
+            it[MeasurementTable.unit] = measurementReading.unit.name
+            it[MeasurementTable.value] = measurementReading.value
             it[MeasurementTable.createdAt] = createdAt
         }
 
-        Measurement(
-            id = insertedRow[MeasurementTable.id],
+        Measurement.create(
+            id = MeasurementId(insertedRow[MeasurementTable.id]),
             equipmentId = equipmentId,
-            type = type,
-            unit = unit,
-            value = value,
+            measurementReading = measurementReading,
             createdAt = createdAt
         )
     }
 
-    override fun findByMeasurementId(measurementId: Long): Measurement? = transaction(database) {
+    override fun findByMeasurementId(measurementId: MeasurementId): Measurement? = transaction(database) {
         val foundRow = MeasurementTable.selectAll()
-            .where { MeasurementTable.id eq measurementId }
+            .where { MeasurementTable.id eq measurementId.value }
             .singleOrNull()
             ?: return@transaction null
 
         toMeasurement(foundRow)
     }
 
-    override fun findByEquipmentId(equipmentId: Long): List<Measurement> = transaction(database) {
+    override fun findByEquipmentId(equipmentId: EquipmentId): List<Measurement> = transaction(database) {
         MeasurementTable.selectAll()
-            .where { MeasurementTable.equipmentId eq equipmentId }
+            .where { MeasurementTable.equipmentId eq equipmentId.value }
             .map { row -> toMeasurement(row) }
     }
 
@@ -61,11 +62,13 @@ class PostgresMeasurementRepository(private val database: Database) : Measuremen
 
     private fun toMeasurement(row: ResultRow): Measurement =
         Measurement(
-            id = row[MeasurementTable.id],
-            equipmentId = row[MeasurementTable.equipmentId],
-            type = MeasurementType.valueOf(row[MeasurementTable.type]),
-            unit = MeasurementUnit.valueOf(row[MeasurementTable.unit]),
-            value = row[MeasurementTable.value],
+            id = MeasurementId(row[MeasurementTable.id]),
+            equipmentId = EquipmentId(row[MeasurementTable.equipmentId]),
+            measurementReading = MeasurementReading(
+                type = MeasurementType.valueOf(row[MeasurementTable.type]),
+                unit = MeasurementUnit.valueOf(row[MeasurementTable.unit]),
+                value = row[MeasurementTable.value]
+            ),
             createdAt = row[MeasurementTable.createdAt]
         )
 }

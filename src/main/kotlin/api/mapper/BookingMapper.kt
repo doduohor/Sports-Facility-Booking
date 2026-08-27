@@ -5,9 +5,9 @@ import com.doduohor.domain.model.Booking
 
 fun Booking.toResponse(): BookingResponse =
     BookingResponse(
-        id = id,
-        facilityId = facilityId,
-        customerId = customerId,
+        id = id.value,
+        facilityId = facilityId.value,
+        customerId = customerId.value,
         timeInterval = "${timeInterval.startTime}/${timeInterval.endTime}",
         status = status.name.lowercase(),
         createdAt = createdAt.toString()

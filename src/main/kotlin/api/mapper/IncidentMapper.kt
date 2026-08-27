@@ -4,10 +4,10 @@ import com.doduohor.api.dto.IncidentResponse
 import com.doduohor.domain.model.Incident
 
 fun Incident.toResponse(): IncidentResponse = IncidentResponse(
-    id = id,
-    facilityId = facilityId,
-    equipmentId = equipmentId,
-    measurementId = measurementId,
+    id = id.value,
+    facilityId = facilityId.value,
+    equipmentId = equipmentId.value,
+    measurementId = measurementId.value,
     type = type.toString().lowercase(),
     severity = severity.toString().lowercase(),
     status = status.toString().lowercase(),

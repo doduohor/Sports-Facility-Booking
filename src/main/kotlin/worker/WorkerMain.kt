@@ -7,6 +7,7 @@ import com.doduohor.infrastructure.messaging.RabbitMqConsumer
 import com.doduohor.infrastructure.messaging.RabbitMqFactory
 import com.doduohor.infrastructure.notification.TelegramConfig
 import com.doduohor.infrastructure.notification.TelegramNotificationSender
+import com.doduohor.infrastructure.time.SystemClock
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
 import com.mongodb.reactivestreams.client.MongoClient
 import kotlinx.coroutines.runBlocking
@@ -20,12 +21,14 @@ fun main(){
     val telegramConfig = TelegramConfig.fromEnv()
     val mongoConfig = MongoConfig.fromEnv()
     val mongoConnection = MongoFactory.connect(mongoConfig)
-    val eventHistoryRepository = MongoEventHistoryRepository(mongoConnection.database)
+    val clock = SystemClock
+    val eventHistoryRepository = MongoEventHistoryRepository(mongoConnection.database, clock)
     runBlocking { eventHistoryRepository.createIndexes() }
     val notificationHandler = TelegramNotificationSender(telegramConfig)
     val messageHandler = MessageHandler(
         notificationSender = notificationHandler,
-        eventHistoryRepository = eventHistoryRepository
+        eventHistoryRepository = eventHistoryRepository,
+        clock = clock
     )
     val rabbitConsumer = RabbitMqConsumer(messageHandler)
     repeat(5){

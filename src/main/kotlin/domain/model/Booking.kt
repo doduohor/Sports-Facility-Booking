@@ -1,5 +1,8 @@
 package com.doduohor.domain.model
 
+import com.doduohor.domain.shared.BookingId
+import com.doduohor.domain.shared.CustomerId
+import com.doduohor.domain.shared.FacilityId
 import java.time.Instant
 
 enum class BookingStatus {
@@ -10,16 +13,16 @@ enum class BookingStatus {
 }
 
 data class Booking(
-    val id: Long,
-    val facilityId: Long,
-    val customerId: Int,
+    val id: BookingId,
+    val facilityId: FacilityId,
+    val customerId: CustomerId,
     val timeInterval: BookingTimeInterval,
     val status: BookingStatus,
     val createdAt: Instant
 ) {
     companion object {
         val DEFAULT_STATUS = BookingStatus.RESERVED
-        fun createNew(id: Long, facilityId: Long, customerId: Int, timeInterval: BookingTimeInterval, createdAt: Instant = Instant.now()): Booking {
+        fun createNew(id: BookingId, facilityId: FacilityId, customerId: CustomerId, timeInterval: BookingTimeInterval, createdAt: Instant ): Booking {
             return Booking(
                 id = id,
                 facilityId = facilityId,
@@ -30,4 +33,9 @@ data class Booking(
             )
         }
     }
+}
+
+sealed interface BookingCreationResult<out T>{
+    data class Success<T>(val value: T): BookingCreationResult<T>
+    data object UnavailableRange: BookingCreationResult<Nothing>
 }

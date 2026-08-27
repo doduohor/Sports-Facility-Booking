@@ -1,28 +1,24 @@
 package com.doduohor.infrastructure.messaging
 
+import com.doduohor.domain.shared.Clock
+import com.doduohor.events.IntegrationEventType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import java.time.Instant
 import java.util.UUID
-
-enum class RabbitMqEventType{
-    MEASUREMENT_CREATED,
-    INCIDENT_CREATED
-}
 
 @Serializable
 data class RabbitMqEvent(
     val eventId: String,
-    val eventType: RabbitMqEventType,
+    val eventType: IntegrationEventType,
     val createdAt: String,
     val data: JsonElement
 ){
     companion object{
-        fun create(eventType: RabbitMqEventType, data: JsonElement): RabbitMqEvent =
+        fun create(eventType: IntegrationEventType, clock: Clock, data: JsonElement): RabbitMqEvent =
             RabbitMqEvent(
                 eventId = UUID.randomUUID().toString(),
                 eventType = eventType,
-                createdAt = Instant.now().toString(),
+                createdAt = clock.now().toString(),
                 data = data
             )
     }

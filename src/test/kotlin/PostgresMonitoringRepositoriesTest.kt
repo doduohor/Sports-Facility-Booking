@@ -6,17 +6,24 @@ import com.doduohor.domain.model.FacilityType
 import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
+import com.doduohor.domain.model.MeasurementReading
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.FacilityId
+import com.doduohor.domain.shared.IncidentId
+import com.doduohor.domain.shared.MeasurementId
 import com.doduohor.infrastructure.database.postgres.BookingTable
 import com.doduohor.infrastructure.database.postgres.EquipmentTable
 import com.doduohor.infrastructure.database.postgres.FacilityTable
 import com.doduohor.infrastructure.database.postgres.IncidentTable
 import com.doduohor.infrastructure.database.postgres.MeasurementTable
+import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.repository.postgres.PostgresEquipmentRepository
 import com.doduohor.repository.postgres.PostgresFacilityRepository
 import com.doduohor.repository.postgres.PostgresIncidentRepository
 import com.doduohor.repository.postgres.PostgresMeasurementRepository
+import com.doduohor.service.CreateEquipmentResult
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import org.flywaydb.core.Flyway
@@ -34,12 +41,16 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import java.time.Instant
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @Testcontainers
 class PostgresMonitoringRepositoriesTest {
+    private val fixedInstant = Instant.parse("2026-08-20T12:00:00Z")
+    private val fixedClock = FixedClock(fixedInstant)
+
     companion object {
         @Container
         val postgres = PostgreSQLContainer("postgres:17-alpine")
@@ -90,13 +101,13 @@ class PostgresMonitoringRepositoriesTest {
         val equipmentRepository = PostgresEquipmentRepository(database)
         val facility = createFacility()
 
-        val createdEquipment = equipmentRepository.create(
+        val createdEquipment = assertIs<CreateEquipmentResult.Success>(equipmentRepository.create(
             facilityId = facility.id,
             name = "Main ventilation",
             type = EquipmentType.VENTILATION
-        )
+        )).equipment
 
-        assertTrue(createdEquipment.id > 0)
+        assertTrue(createdEquipment.id.value > 0)
         assertEquals(facility.id, createdEquipment.facilityId)
         assertEquals("Main ventilation", createdEquipment.name)
         assertEquals(EquipmentType.VENTILATION, createdEquipment.type)
@@ -104,7 +115,7 @@ class PostgresMonitoringRepositoriesTest {
         assertEquals(createdEquipment, equipmentRepository.findByEquipmentId(createdEquipment.id))
         assertEquals(listOf(createdEquipment), equipmentRepository.findByFacilityId(facility.id))
         assertEquals(listOf(createdEquipment), equipmentRepository.findAll())
-        assertNull(equipmentRepository.findByEquipmentId(999_999))
+        assertNull(equipmentRepository.findByEquipmentId(EquipmentId(999_999)))
     }
 
     @Test
@@ -113,7 +124,7 @@ class PostgresMonitoringRepositoriesTest {
 
         assertFailsWith<ExposedSQLException> {
             equipmentRepository.create(
-                facilityId = 999_999,
+                facilityId = FacilityId(999_999),
                 name = "Orphan ventilation",
                 type = EquipmentType.VENTILATION
             )
@@ -126,7 +137,7 @@ class PostgresMonitoringRepositoriesTest {
         val facility = createFacility()
         val equipmentId = transaction(database) {
             EquipmentTable.insert {
-                it[facilityId] = facility.id
+                it[facilityId] = facility.id.value
                 it[name] = "Broken equipment"
                 it[type] = "UNKNOWN_TYPE"
                 it[status] = EquipmentStatus.DISABLED.name
@@ -134,7 +145,7 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            equipmentRepository.findByEquipmentId(equipmentId)
+            equipmentRepository.findByEquipmentId(EquipmentId(equipmentId))
         }
     }
 
@@ -144,7 +155,7 @@ class PostgresMonitoringRepositoriesTest {
         val facility = createFacility()
         val equipmentId = transaction(database) {
             EquipmentTable.insert {
-                it[facilityId] = facility.id
+                it[facilityId] = facility.id.value
                 it[name] = "Broken equipment"
                 it[type] = EquipmentType.VENTILATION.name
                 it[status] = "UNKNOWN_STATUS"
@@ -152,54 +163,59 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            equipmentRepository.findByEquipmentId(equipmentId)
+            equipmentRepository.findByEquipmentId(EquipmentId(equipmentId))
         }
     }
 
     @Test
     fun `measurement repository persists and finds measurements`() {
-        val measurementRepository = PostgresMeasurementRepository(database)
+        val measurementRepository = measurementRepository()
         val equipment = createEquipment()
 
         val createdMeasurement = measurementRepository.create(
             equipmentId = equipment.id,
-            type = MeasurementType.TEMPERATURE,
-            unit = MeasurementUnit.CELSIUS,
-            value = 24.5
+            measurementReading = MeasurementReading(
+                type = MeasurementType.TEMPERATURE,
+                unit = MeasurementUnit.CELSIUS,
+                value = 24.5
+            )
         )
 
-        assertTrue(createdMeasurement.id > 0)
+        assertTrue(createdMeasurement.id.value > 0)
         assertEquals(equipment.id, createdMeasurement.equipmentId)
-        assertEquals(MeasurementType.TEMPERATURE, createdMeasurement.type)
-        assertEquals(MeasurementUnit.CELSIUS, createdMeasurement.unit)
-        assertEquals(24.5, createdMeasurement.value)
+        assertEquals(MeasurementType.TEMPERATURE, createdMeasurement.measurementReading.type)
+        assertEquals(MeasurementUnit.CELSIUS, createdMeasurement.measurementReading.unit)
+        assertEquals(24.5, createdMeasurement.measurementReading.value)
+        assertEquals(fixedInstant, createdMeasurement.createdAt)
         assertEquals(createdMeasurement, measurementRepository.findByMeasurementId(createdMeasurement.id))
         assertEquals(listOf(createdMeasurement), measurementRepository.findByEquipmentId(equipment.id))
         assertEquals(listOf(createdMeasurement), measurementRepository.findAll())
-        assertNull(measurementRepository.findByMeasurementId(999_999))
+        assertNull(measurementRepository.findByMeasurementId(MeasurementId(999_999)))
     }
 
     @Test
     fun `measurement create fails when equipment foreign key does not exist`() {
-        val measurementRepository = PostgresMeasurementRepository(database)
+        val measurementRepository = measurementRepository()
 
         assertFailsWith<ExposedSQLException> {
             measurementRepository.create(
-                equipmentId = 999_999,
-                type = MeasurementType.TEMPERATURE,
-                unit = MeasurementUnit.CELSIUS,
-                value = 24.5
+                equipmentId = EquipmentId(999_999),
+                measurementReading = MeasurementReading(
+                    type = MeasurementType.TEMPERATURE,
+                    unit = MeasurementUnit.CELSIUS,
+                    value = 24.5
+                )
             )
         }
     }
 
     @Test
     fun `findByMeasurementId fails when stored measurement type is unknown`() {
-        val measurementRepository = PostgresMeasurementRepository(database)
+        val measurementRepository = measurementRepository()
         val equipment = createEquipment()
         val measurementId = transaction(database) {
             MeasurementTable.insert {
-                it[equipmentId] = equipment.id
+                it[equipmentId] = equipment.id.value
                 it[type] = "UNKNOWN_TYPE"
                 it[unit] = MeasurementUnit.CELSIUS.name
                 it[value] = 24.5
@@ -208,17 +224,17 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            measurementRepository.findByMeasurementId(measurementId)
+            measurementRepository.findByMeasurementId(MeasurementId(measurementId))
         }
     }
 
     @Test
     fun `findByMeasurementId fails when stored measurement unit is unknown`() {
-        val measurementRepository = PostgresMeasurementRepository(database)
+        val measurementRepository = measurementRepository()
         val equipment = createEquipment()
         val measurementId = transaction(database) {
             MeasurementTable.insert {
-                it[equipmentId] = equipment.id
+                it[equipmentId] = equipment.id.value
                 it[type] = MeasurementType.TEMPERATURE.name
                 it[unit] = "UNKNOWN_UNIT"
                 it[value] = 24.5
@@ -227,20 +243,22 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            measurementRepository.findByMeasurementId(measurementId)
+            measurementRepository.findByMeasurementId(MeasurementId(measurementId))
         }
     }
 
     @Test
     fun `incident repository persists and finds incidents`() {
-        val incidentRepository = PostgresIncidentRepository(database)
+        val incidentRepository = incidentRepository()
         val facility = createFacility()
         val equipment = createEquipment(facility.id)
-        val measurement = PostgresMeasurementRepository(database).create(
+        val measurement = measurementRepository().create(
             equipmentId = equipment.id,
-            type = MeasurementType.SMOKE,
-            unit = MeasurementUnit.PERCENT,
-            value = 12.0
+            measurementReading = MeasurementReading(
+                type = MeasurementType.SMOKE,
+                unit = MeasurementUnit.PERCENT,
+                value = 12.0
+            )
         )
 
         val createdIncident = incidentRepository.create(
@@ -254,7 +272,7 @@ class PostgresMonitoringRepositoriesTest {
             value = 12.0
         )
 
-        assertTrue(createdIncident.id > 0)
+        assertTrue(createdIncident.id.value > 0)
         assertEquals(facility.id, createdIncident.facilityId)
         assertEquals(equipment.id, createdIncident.equipmentId)
         assertEquals(measurement.id, createdIncident.measurementId)
@@ -264,16 +282,17 @@ class PostgresMonitoringRepositoriesTest {
         assertEquals(MeasurementType.SMOKE, createdIncident.measurementType)
         assertEquals(MeasurementUnit.PERCENT, createdIncident.measurementUnit)
         assertEquals(12.0, createdIncident.value)
+        assertEquals(fixedInstant, createdIncident.createdAt)
         assertEquals(createdIncident, incidentRepository.findByIncidentId(createdIncident.id))
         assertEquals(listOf(createdIncident), incidentRepository.findByFacilityId(facility.id))
         assertEquals(listOf(createdIncident), incidentRepository.findByEquipmentId(equipment.id))
         assertEquals(listOf(createdIncident), incidentRepository.findAll())
-        assertNull(incidentRepository.findByIncidentId(999_999))
+        assertNull(incidentRepository.findByIncidentId(IncidentId(999_999)))
     }
 
     @Test
     fun `incident create fails when measurement foreign key does not exist`() {
-        val incidentRepository = PostgresIncidentRepository(database)
+        val incidentRepository = incidentRepository()
         val facility = createFacility()
         val equipment = createEquipment(facility.id)
 
@@ -281,7 +300,7 @@ class PostgresMonitoringRepositoriesTest {
             incidentRepository.create(
                 facilityId = facility.id,
                 equipmentId = equipment.id,
-                measurementId = 999_999,
+                measurementId = MeasurementId(999_999),
                 type = IncidentType.SMOKE_DETECTED,
                 severity = IncidentSeverity.HIGH,
                 measurementType = MeasurementType.SMOKE,
@@ -293,20 +312,22 @@ class PostgresMonitoringRepositoriesTest {
 
     @Test
     fun `findByIncidentId fails when stored incident status is unknown`() {
-        val incidentRepository = PostgresIncidentRepository(database)
+        val incidentRepository = incidentRepository()
         val facility = createFacility()
         val equipment = createEquipment(facility.id)
-        val measurement = PostgresMeasurementRepository(database).create(
+        val measurement = measurementRepository().create(
             equipmentId = equipment.id,
-            type = MeasurementType.SMOKE,
-            unit = MeasurementUnit.PERCENT,
-            value = 12.0
+            measurementReading = MeasurementReading(
+                type = MeasurementType.SMOKE,
+                unit = MeasurementUnit.PERCENT,
+                value = 12.0
+            )
         )
         val incidentId = transaction(database) {
             IncidentTable.insert {
-                it[facilityId] = facility.id
-                it[equipmentId] = equipment.id
-                it[measurementId] = measurement.id
+                it[facilityId] = facility.id.value
+                it[equipmentId] = equipment.id.value
+                it[measurementId] = measurement.id.value
                 it[type] = IncidentType.SMOKE_DETECTED.name
                 it[severity] = IncidentSeverity.HIGH.name
                 it[status] = "UNKNOWN_STATUS"
@@ -318,26 +339,28 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            incidentRepository.findByIncidentId(incidentId)
+            incidentRepository.findByIncidentId(IncidentId(incidentId))
         }
     }
 
     @Test
     fun `findByIncidentId fails when stored incident type is unknown`() {
-        val incidentRepository = PostgresIncidentRepository(database)
+        val incidentRepository = incidentRepository()
         val facility = createFacility()
         val equipment = createEquipment(facility.id)
-        val measurement = PostgresMeasurementRepository(database).create(
+        val measurement = measurementRepository().create(
             equipmentId = equipment.id,
-            type = MeasurementType.SMOKE,
-            unit = MeasurementUnit.PERCENT,
-            value = 12.0
+            measurementReading = MeasurementReading(
+                type = MeasurementType.SMOKE,
+                unit = MeasurementUnit.PERCENT,
+                value = 12.0
+            )
         )
         val incidentId = transaction(database) {
             IncidentTable.insert {
-                it[facilityId] = facility.id
-                it[equipmentId] = equipment.id
-                it[measurementId] = measurement.id
+                it[facilityId] = facility.id.value
+                it[equipmentId] = equipment.id.value
+                it[measurementId] = measurement.id.value
                 it[type] = "UNKNOWN_TYPE"
                 it[severity] = IncidentSeverity.HIGH.name
                 it[status] = IncidentStatus.OPEN.name
@@ -349,7 +372,7 @@ class PostgresMonitoringRepositoriesTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            incidentRepository.findByIncidentId(incidentId)
+            incidentRepository.findByIncidentId(IncidentId(incidentId))
         }
     }
 
@@ -357,12 +380,16 @@ class PostgresMonitoringRepositoriesTest {
         PostgresFacilityRepository(database).create(
             facilityName = "Main Gym",
             facilityType = FacilityType.GYM
-        )
+        ).let { it.getOrThrow() }
 
-    private fun createEquipment(facilityId: Long = createFacility().id) =
+    private fun createEquipment(facilityId: FacilityId = createFacility().id) =
         PostgresEquipmentRepository(database).create(
             facilityId = facilityId,
             name = "Main ventilation",
             type = EquipmentType.VENTILATION
-        )
+        ).let { assertIs<CreateEquipmentResult.Success>(it).equipment }
+
+    private fun measurementRepository() = PostgresMeasurementRepository(database, fixedClock)
+
+    private fun incidentRepository() = PostgresIncidentRepository(database, fixedClock)
 }

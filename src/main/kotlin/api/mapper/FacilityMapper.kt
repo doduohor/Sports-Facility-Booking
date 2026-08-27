@@ -5,7 +5,7 @@ import com.doduohor.domain.model.Facility
 
 fun Facility.toResponse(): FacilityResponse =
     FacilityResponse(
-        id = id,
+        id = id.value,
         name = name,
         type = type.name.lowercase(),
         status = status.name.lowercase()

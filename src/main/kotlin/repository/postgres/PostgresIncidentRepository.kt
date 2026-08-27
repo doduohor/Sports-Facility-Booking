@@ -6,33 +6,40 @@ import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.shared.Clock
 import com.doduohor.infrastructure.database.postgres.IncidentTable
 import com.doduohor.repository.IncidentRepository
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.FacilityId
+import com.doduohor.domain.shared.IncidentId
+import com.doduohor.domain.shared.MeasurementId
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import java.time.Instant
 import java.time.temporal.ChronoUnit
 
-class PostgresIncidentRepository(private val database: Database) : IncidentRepository {
+class PostgresIncidentRepository(
+    private val database: Database,
+    private val clock: Clock
+) : IncidentRepository {
     override fun create(
-        facilityId: Long,
-        equipmentId: Long,
-        measurementId: Long,
+        facilityId: FacilityId,
+        equipmentId: EquipmentId,
+        measurementId: MeasurementId,
         type: IncidentType,
         severity: IncidentSeverity,
         measurementType: MeasurementType,
         measurementUnit: MeasurementUnit,
         value: Double
     ): Incident = transaction(database) {
-        val createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS)
+        val createdAt = clock.now().truncatedTo(ChronoUnit.MICROS)
         val insertedRow = IncidentTable.insert {
-            it[IncidentTable.facilityId] = facilityId
-            it[IncidentTable.equipmentId] = equipmentId
-            it[IncidentTable.measurementId] = measurementId
+            it[IncidentTable.facilityId] = facilityId.value
+            it[IncidentTable.equipmentId] = equipmentId.value
+            it[IncidentTable.measurementId] = measurementId.value
             it[IncidentTable.type] = type.name
             it[IncidentTable.severity] = severity.name
             it[IncidentTable.status] = IncidentStatus.OPEN.name
@@ -43,7 +50,7 @@ class PostgresIncidentRepository(private val database: Database) : IncidentRepos
         }
 
         Incident(
-            id = insertedRow[IncidentTable.id],
+            id = IncidentId(insertedRow[IncidentTable.id]),
             facilityId = facilityId,
             equipmentId = equipmentId,
             measurementId = measurementId,
@@ -57,24 +64,24 @@ class PostgresIncidentRepository(private val database: Database) : IncidentRepos
         )
     }
 
-    override fun findByIncidentId(incidentId: Long): Incident? = transaction(database) {
+    override fun findByIncidentId(incidentId: IncidentId): Incident? = transaction(database) {
         val foundRow = IncidentTable.selectAll()
-            .where { IncidentTable.id eq incidentId }
+            .where { IncidentTable.id eq incidentId.value }
             .singleOrNull()
             ?: return@transaction null
 
         toIncident(foundRow)
     }
 
-    override fun findByFacilityId(facilityId: Long): List<Incident> = transaction(database) {
+    override fun findByFacilityId(facilityId: FacilityId): List<Incident> = transaction(database) {
         IncidentTable.selectAll()
-            .where { IncidentTable.facilityId eq facilityId }
+            .where { IncidentTable.facilityId eq facilityId.value }
             .map { row -> toIncident(row) }
     }
 
-    override fun findByEquipmentId(equipmentId: Long): List<Incident> = transaction(database) {
+    override fun findByEquipmentId(equipmentId: EquipmentId): List<Incident> = transaction(database) {
         IncidentTable.selectAll()
-            .where { IncidentTable.equipmentId eq equipmentId }
+            .where { IncidentTable.equipmentId eq equipmentId.value }
             .map { row -> toIncident(row) }
     }
 
@@ -84,10 +91,10 @@ class PostgresIncidentRepository(private val database: Database) : IncidentRepos
 
     private fun toIncident(row: ResultRow): Incident =
         Incident(
-            id = row[IncidentTable.id],
-            facilityId = row[IncidentTable.facilityId],
-            equipmentId = row[IncidentTable.equipmentId],
-            measurementId = row[IncidentTable.measurementId],
+            id = IncidentId(row[IncidentTable.id]),
+            facilityId = FacilityId(row[IncidentTable.facilityId]),
+            equipmentId = EquipmentId(row[IncidentTable.equipmentId]),
+            measurementId = MeasurementId(row[IncidentTable.measurementId]),
             type = IncidentType.valueOf(row[IncidentTable.type]),
             severity = IncidentSeverity.valueOf(row[IncidentTable.severity]),
             status = IncidentStatus.valueOf(row[IncidentTable.status]),

@@ -1,10 +1,16 @@
 package com.doduohor
 
+import com.doduohor.domain.model.Booking
+import com.doduohor.domain.model.BookingCreationResult
 import com.doduohor.domain.model.BookingStatus
+import com.doduohor.domain.shared.BookingId
+import com.doduohor.domain.shared.CustomerId
+import com.doduohor.domain.shared.FacilityId
 import com.doduohor.domain.model.BookingTimeInterval
 import com.doduohor.domain.model.FacilityType
 import com.doduohor.infrastructure.database.postgres.BookingTable
 import com.doduohor.infrastructure.database.postgres.FacilityTable
+import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.repository.postgres.PostgresBookingRepository
 import com.doduohor.repository.postgres.PostgresFacilityRepository
 import com.zaxxer.hikari.HikariConfig
@@ -23,15 +29,21 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 @Testcontainers
 class PostgresBookingRepositoryTest {
+    private val fixedInstant = Instant.parse("2026-08-20T12:00:00Z")
+    private val fixedClock = FixedClock(fixedInstant)
+
     companion object {
         @Container
         val postgres = PostgreSQLContainer("postgres:17-alpine")
@@ -76,21 +88,22 @@ class PostgresBookingRepositoryTest {
 
     @Test
     fun `create persists booking and findByBookingId returns it`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
         val facility = createFacility()
         val interval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T08:00:00Z")
 
-        val createdBooking = bookingRepository.create(
+        val createdBooking = bookingRepository.createIfAvailable(
             facilityId = facility.id,
-            customerId = 900,
+            customerId = CustomerId(900),
             timeInterval = interval
-        )
+        ).bookingOrFail()
 
-        assertTrue(createdBooking.id > 0)
+        assertTrue(createdBooking.id.value > 0)
         assertEquals(facility.id, createdBooking.facilityId)
-        assertEquals(900, createdBooking.customerId)
+        assertEquals(900, createdBooking.customerId.value)
         assertEquals(interval, createdBooking.timeInterval)
         assertEquals(BookingStatus.RESERVED, createdBooking.status)
+        assertEquals(fixedInstant, createdBooking.createdAt)
 
         val foundBooking = assertNotNull(bookingRepository.findByBookingId(createdBooking.id))
         assertEquals(createdBooking.id, foundBooking.id)
@@ -102,21 +115,21 @@ class PostgresBookingRepositoryTest {
 
     @Test
     fun `findByBookingId returns null when booking does not exist`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
 
-        val foundBooking = bookingRepository.findByBookingId(999_999)
+        val foundBooking = bookingRepository.findByBookingId(BookingId(999_999))
 
         assertNull(foundBooking)
     }
 
     @Test
     fun `create fails when facility foreign key does not exist`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
 
         assertFailsWith<ExposedSQLException> {
-            bookingRepository.create(
-                facilityId = 999_999,
-                customerId = 900,
+            bookingRepository.createIfAvailable(
+                facilityId = FacilityId(999_999),
+                customerId = CustomerId(900),
                 timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T08:00:00Z")
             )
         }
@@ -124,17 +137,17 @@ class PostgresBookingRepositoryTest {
 
     @Test
     fun `findByFacilityId returns only bookings for requested facility`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
         val firstFacility = createFacility("Main Gym", FacilityType.GYM)
         val secondFacility = createFacility("Pool", FacilityType.POOL)
-        val firstBooking = bookingRepository.create(
+        val firstBooking = bookingRepository.createIfAvailable(
             facilityId = firstFacility.id,
-            customerId = 900,
+            customerId = CustomerId(900),
             timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T08:00:00Z")
-        )
-        bookingRepository.create(
+        ).bookingOrFail()
+        bookingRepository.createIfAvailable(
             facilityId = secondFacility.id,
-            customerId = 901,
+            customerId = CustomerId(901),
             timeInterval = bookingInterval("2026-08-12T09:00:00Z", "2026-08-12T10:00:00Z")
         )
 
@@ -145,18 +158,18 @@ class PostgresBookingRepositoryTest {
 
     @Test
     fun `findAll returns all persisted bookings`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
         val facility = createFacility()
-        val firstBooking = bookingRepository.create(
+        val firstBooking = bookingRepository.createIfAvailable(
             facilityId = facility.id,
-            customerId = 900,
+            customerId = CustomerId(900),
             timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T08:00:00Z")
-        )
-        val secondBooking = bookingRepository.create(
+        ).bookingOrFail()
+        val secondBooking = bookingRepository.createIfAvailable(
             facilityId = facility.id,
-            customerId = 901,
+            customerId = CustomerId(901),
             timeInterval = bookingInterval("2026-08-12T08:00:00Z", "2026-08-12T09:00:00Z")
-        )
+        ).bookingOrFail()
 
         val bookings = bookingRepository.findAll()
 
@@ -164,68 +177,132 @@ class PostgresBookingRepositoryTest {
     }
 
     @Test
-    fun `findOverlappingByFacilityId returns true for overlapping interval`() {
-        val bookingRepository = PostgresBookingRepository(database)
+    fun `createIfAvailable returns unavailable for overlapping interval`() {
+        val bookingRepository = bookingRepository()
         val facility = createFacility()
-        bookingRepository.create(
+        bookingRepository.createIfAvailable(
             facilityId = facility.id,
-            customerId = 900,
-            timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T09:00:00Z")
+            customerId = CustomerId(900),
+            timeInterval = bookingInterval("2026-08-12T10:00:00Z", "2026-08-12T12:00:00Z")
         )
 
-        val hasOverlap = bookingRepository.findOverlappingByFacilityId(
-            facilityId = facility.id,
-            timeInterval = bookingInterval("2026-08-12T08:00:00Z", "2026-08-12T10:00:00Z")
+        val intervals = listOf(
+            "2026-08-12T10:00:00Z" to "2026-08-12T11:00:00Z",
+            "2026-08-12T11:00:00Z" to "2026-08-12T12:00:00Z",
+            "2026-08-12T09:00:00Z" to "2026-08-12T13:00:00Z"
         )
 
-        assertTrue(hasOverlap)
+        intervals.forEachIndexed { index, (start, end) ->
+            assertIs<BookingCreationResult.UnavailableRange>(bookingRepository.createIfAvailable(
+                facilityId = facility.id,
+                customerId = CustomerId(901 + index),
+                timeInterval = bookingInterval(start, end)
+            ))
+        }
     }
 
     @Test
-    fun `findOverlappingByFacilityId returns false for adjacent interval`() {
-        val bookingRepository = PostgresBookingRepository(database)
-        val facility = createFacility()
-        bookingRepository.create(
-            facilityId = facility.id,
-            customerId = 900,
-            timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T09:00:00Z")
-        )
-
-        val hasOverlap = bookingRepository.findOverlappingByFacilityId(
-            facilityId = facility.id,
-            timeInterval = bookingInterval("2026-08-12T09:00:00Z", "2026-08-12T10:00:00Z")
-        )
-
-        assertFalse(hasOverlap)
-    }
-
-    @Test
-    fun `findOverlappingByFacilityId ignores bookings from another facility`() {
-        val bookingRepository = PostgresBookingRepository(database)
+    fun `createIfAvailable allows adjacent and other facility intervals`() {
+        val bookingRepository = bookingRepository()
         val firstFacility = createFacility("Main Gym", FacilityType.GYM)
         val secondFacility = createFacility("Pool", FacilityType.POOL)
-        bookingRepository.create(
+        bookingRepository.createIfAvailable(
             facilityId = firstFacility.id,
-            customerId = 900,
+            customerId = CustomerId(900),
             timeInterval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T09:00:00Z")
         )
 
-        val hasOverlap = bookingRepository.findOverlappingByFacilityId(
+        val adjacentBooking = bookingRepository.createIfAvailable(
+            facilityId = firstFacility.id,
+            customerId = CustomerId(901),
+            timeInterval = bookingInterval("2026-08-12T09:00:00Z", "2026-08-12T10:00:00Z")
+        )
+        val otherFacilityBooking = bookingRepository.createIfAvailable(
             facilityId = secondFacility.id,
+            customerId = CustomerId(902),
             timeInterval = bookingInterval("2026-08-12T08:00:00Z", "2026-08-12T10:00:00Z")
         )
 
-        assertFalse(hasOverlap)
+        assertIs<BookingCreationResult.Success<Booking>>(adjacentBooking)
+        assertIs<BookingCreationResult.Success<Booking>>(otherFacilityBooking)
+    }
+
+    @Test
+    fun `createIfAvailable returns unavailable when interval overlaps booking for same facility`() {
+        val bookingRepository = bookingRepository()
+        val firstFacility = createFacility("Main Gym", FacilityType.GYM)
+        val secondFacility = createFacility("Pool", FacilityType.POOL)
+        bookingRepository.createIfAvailable(
+            facilityId = firstFacility.id,
+            customerId = CustomerId(900),
+            timeInterval = bookingInterval("2026-08-12T10:00:00Z", "2026-08-12T12:00:00Z")
+        )
+
+        val result = bookingRepository.createIfAvailable(
+            facilityId = firstFacility.id,
+            customerId = CustomerId(901),
+            timeInterval = bookingInterval("2026-08-12T11:00:00Z", "2026-08-12T13:00:00Z")
+        )
+
+        val adjacentBooking = bookingRepository.createIfAvailable(
+            facilityId = firstFacility.id,
+            customerId = CustomerId(902),
+            timeInterval = bookingInterval("2026-08-12T12:00:00Z", "2026-08-12T13:00:00Z")
+        ).bookingOrFail()
+        val otherFacilityBooking = bookingRepository.createIfAvailable(
+            facilityId = secondFacility.id,
+            customerId = CustomerId(903),
+            timeInterval = bookingInterval("2026-08-12T11:00:00Z", "2026-08-12T13:00:00Z")
+        ).bookingOrFail()
+
+        assertIs<BookingCreationResult.UnavailableRange>(result)
+        assertEquals(firstFacility.id, adjacentBooking.facilityId)
+        assertEquals(secondFacility.id, otherFacilityBooking.facilityId)
+    }
+
+    @Test
+    fun `concurrent createIfAvailable allows only one overlapping booking`() {
+        val facility = createFacility()
+        val interval = bookingInterval("2026-08-12T10:00:00Z", "2026-08-12T12:00:00Z")
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+
+        try {
+            val futures = (900..901).map { customerId ->
+                executor.submit<BookingCreationResult<Booking>> {
+                    ready.countDown()
+                    check(start.await(10, TimeUnit.SECONDS)) { "Concurrent test did not start in time" }
+
+                    bookingRepository().createIfAvailable(
+                        facilityId = facility.id,
+                        customerId = CustomerId(customerId),
+                        timeInterval = interval
+                    )
+                }
+            }
+
+            assertTrue(ready.await(10, TimeUnit.SECONDS))
+            start.countDown()
+
+            val results = futures.map { it.get(30, TimeUnit.SECONDS) }
+
+            assertEquals(1, results.count { it is BookingCreationResult.Success })
+            assertEquals(1, results.count { it is BookingCreationResult.UnavailableRange })
+            assertEquals(1, bookingRepository().findByFacilityId(facility.id).size)
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test
     fun `findByBookingId fails when stored booking status is unknown`() {
-        val bookingRepository = PostgresBookingRepository(database)
+        val bookingRepository = bookingRepository()
         val facility = createFacility()
         val interval = bookingInterval("2026-08-12T07:00:00Z", "2026-08-12T08:00:00Z")
         val bookingId = transaction(database) {
             BookingTable.insert {
-                it[facilityId] = facility.id
+                it[facilityId] = facility.id.value
                 it[customerId] = 900
                 it[startTime] = interval.startTime
                 it[endTime] = interval.endTime
@@ -235,7 +312,7 @@ class PostgresBookingRepositoryTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            bookingRepository.findByBookingId(bookingId)
+            bookingRepository.findByBookingId(BookingId(bookingId))
         }
     }
 
@@ -245,11 +322,16 @@ class PostgresBookingRepositoryTest {
     ) = PostgresFacilityRepository(database).create(
         facilityName = name,
         facilityType = type
-    )
+    ).getOrThrow()
 
     private fun bookingInterval(startTime: String, endTime: String) =
         BookingTimeInterval(
             startTime = Instant.parse(startTime),
             endTime = Instant.parse(endTime)
         )
+
+    private fun bookingRepository() = PostgresBookingRepository(database, fixedClock)
+
+    private fun BookingCreationResult<Booking>.bookingOrFail(): Booking =
+        assertIs<BookingCreationResult.Success<Booking>>(this).value
 }

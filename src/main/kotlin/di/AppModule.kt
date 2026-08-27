@@ -1,5 +1,6 @@
 package com.doduohor.di
 
+import com.doduohor.domain.shared.Clock
 import com.doduohor.events.EventPublisher
 import com.doduohor.infrastructure.database.mongo.MongoConnection
 import com.doduohor.infrastructure.messaging.MessagePublisher
@@ -10,15 +11,15 @@ import com.doduohor.infrastructure.messaging.RabbitMqPublisher
 import com.doduohor.repository.BookingRepository
 import com.doduohor.repository.EquipmentRepository
 import com.doduohor.repository.FacilityRepository
-import com.doduohor.repository.InMemoryBookingRepository
-import com.doduohor.repository.InMemoryEquipmentRepository
-import com.doduohor.repository.InMemoryFacilityRepository
-import com.doduohor.repository.InMemoryIncidentRepository
-import com.doduohor.repository.InMemoryMeasurementRepository
 import com.doduohor.repository.IncidentRepository
 import com.doduohor.repository.MeasurementRepository
+import com.doduohor.repository.MonitoringTransaction
+import com.doduohor.repository.PostgresMonitoringTransaction
 import com.doduohor.repository.mongo.EventHistoryRepository
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
+import com.doduohor.events.OutboxEventsRepository
+import com.doduohor.infrastructure.time.SystemClock
+import com.doduohor.repository.postgres.PostgresOutboxEventsRepository
 import com.doduohor.repository.postgres.PostgresBookingRepository
 import com.doduohor.repository.postgres.PostgresEquipmentRepository
 import com.doduohor.repository.postgres.PostgresFacilityRepository
@@ -40,7 +41,7 @@ import org.koin.dsl.module
 import org.koin.dsl.onClose
 import org.koin.ktor.plugin.Koin
 
-private val commonModule = module {
+internal val commonModule = module {
     single { FacilityService(get()) }
     single { BookingService(get(), get()) }
     single { EquipmentService(get(), get()) }
@@ -48,29 +49,7 @@ private val commonModule = module {
     single { IncidentService(get(), get(), get()) }
     single { IncidentPolicy() }
     single { EventPublisher() }
-    single { MonitoringService(get(), get(), get(), get(), get(), get()) }
-}
-
-private val inMemoryModule = module {
-    single<FacilityRepository> {
-        InMemoryFacilityRepository()
-    }
-
-    single<BookingRepository> {
-        InMemoryBookingRepository()
-    }
-
-    single<EquipmentRepository> {
-        InMemoryEquipmentRepository()
-    }
-
-    single<MeasurementRepository> {
-        InMemoryMeasurementRepository()
-    }
-
-    single<IncidentRepository> {
-        InMemoryIncidentRepository()
-    }
+    single { MonitoringService(get(), get(), get(), get(), get(), get(), get(), get()) }
 }
 
 private fun postgresModule(database: Database) = module {
@@ -78,12 +57,16 @@ private fun postgresModule(database: Database) = module {
         database
     }
 
+    single<Clock> {
+        SystemClock
+    }
+
     single<FacilityRepository> {
         PostgresFacilityRepository(get())
     }
 
     single<BookingRepository> {
-        PostgresBookingRepository(get())
+        PostgresBookingRepository(get(), get())
     }
 
     single<EquipmentRepository> {
@@ -91,15 +74,24 @@ private fun postgresModule(database: Database) = module {
     }
 
     single<MeasurementRepository> {
-        PostgresMeasurementRepository(get())
+        PostgresMeasurementRepository(get(), get())
     }
 
     single<IncidentRepository> {
-        PostgresIncidentRepository(get())
+        PostgresIncidentRepository(get(), get())
     }
+
+    single<OutboxEventsRepository> {
+        PostgresOutboxEventsRepository(get(), get())
+    }
+
+    single<MonitoringTransaction> {
+        PostgresMonitoringTransaction(get())
+    }
+
 }
 
-private fun messagingModule(config: RabbitMqConfig, messagePublisher: MessagePublisher?) = module {
+internal fun messagingModule(config: RabbitMqConfig, messagePublisher: MessagePublisher?) = module {
     single<RabbitMqConfig> { config }
 
     single<RabbitMqConnection> {
@@ -129,17 +121,16 @@ private fun mongoModule(mongoConnection: MongoConnection) = module {
         mongoConnection.database
     }
     single<EventHistoryRepository> {
-        MongoEventHistoryRepository(get())
+        MongoEventHistoryRepository(get(), get())
     }
 }
 
 fun Application.configureKoin(
-    database: Database?,
+    database: Database,
     messagePublisher: MessagePublisher? = null,
     mongoConnection: MongoConnection? = null
 ) {
     install(Koin) {
-        val persistenceModule = database?.let(::postgresModule) ?: inMemoryModule
         val rabbitMqConfig = RabbitMqConfig.from(environment.config)
         val mongoModules: List<Module> = mongoConnection
             ?.let { listOf(mongoModule(it)) }
@@ -147,7 +138,7 @@ fun Application.configureKoin(
 
         modules(
             commonModule,
-            persistenceModule,
+            postgresModule(database),
             messagingModule(rabbitMqConfig, messagePublisher),
             *mongoModules.toTypedArray()
         )

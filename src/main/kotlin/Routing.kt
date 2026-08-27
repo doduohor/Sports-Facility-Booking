@@ -12,7 +12,14 @@ import com.doduohor.api.dto.IncidentsResponse
 import com.doduohor.api.dto.MeasurementCreate
 import com.doduohor.api.dto.MeasurementsResponse
 import com.doduohor.api.dto.SuccessResponse
+import com.doduohor.api.mapper.ApiInputParsers
 import com.doduohor.api.mapper.toResponse
+import com.doduohor.domain.shared.ParsingResult
+import com.doduohor.domain.model.MeasurementType
+import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.model.IncidentType
+import com.doduohor.domain.model.IncidentSeverity
+import com.doduohor.domain.shared.CustomerId
 import com.doduohor.events.EventPublisher
 import com.doduohor.events.eventStreamRoutes
 import com.doduohor.service.ActivateFacilityResult
@@ -77,26 +84,27 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
     authenticate("auth-basic"){
         post("/api/facilities") {
             val request = call.receive<FacilityCreate>()
-            val facility = facilityService.createFacility(
-                name = request.name,
-                type = request.type
-            )
-
-            when (facility) {
-                CreateFacilityResult.InvalidName -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidName", "Facility name must not be blank")
-                )
-
-                CreateFacilityResult.InvalidType -> call.respond(
+            when(val result = ApiInputParsers.parseFacilityType(request.type)){
+                is ParsingResult.Error -> call.respond(
                     HttpStatusCode.BadRequest,
                     ErrorResponse(400, "invalidType", "The specified type does not exist in the system")
                 )
+                is ParsingResult.Success -> {
+                    when(val facility = facilityService.createFacility(
+                        name = request.name,
+                        type = result.value
+                    )){
+                        CreateFacilityResult.InvalidName -> call.respond(
+                            HttpStatusCode.BadRequest,
+                            ErrorResponse(400, "invalidName", "Facility name must not be blank")
+                        )
+                        is CreateFacilityResult.Success -> call.respond(
+                            HttpStatusCode.Created,
+                            facility.facility.toResponse()
+                        )
+                    }
+                }
 
-                is CreateFacilityResult.Success -> call.respond(
-                    HttpStatusCode.Created,
-                    facility.facility.toResponse()
-                )
             }
         }
     }
@@ -200,7 +208,7 @@ fun Route.bookingRoutes(bookingService: BookingService) {
 
                 CreateBookingResult.InvalidCustomerId -> call.respond(
                     HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidCustomerId", "The Customer ID must be in the range of 100 to 1000.")
+                    ErrorResponse(400, "invalidCustomerId", "Customer ID is not allowed to create bookings.")
                 )
 
                 CreateBookingResult.InvalidTimeInterval -> call.respond(
@@ -301,33 +309,34 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
     authenticate("auth-basic"){
         post("/api/equipments") {
             val request = call.receive<EquipmentCreate>()
-            val equipment = equipmentService.create(request.facilityId, request.name, request.type)
-
-            when (equipment) {
-                CreateEquipmentResult.InvalidFacilityId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
-                )
-
-                CreateEquipmentResult.NotFindFacilityId -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-                )
-
-                CreateEquipmentResult.InvalidName -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidName", "An incorrect name has been specified")
-                )
-
-                CreateEquipmentResult.InvalidType -> call.respond(
+            when(val parseTypeResult = ApiInputParsers.parseEquipmentType(request.type)){
+                is ParsingResult.Error -> call.respond(
                     HttpStatusCode.BadRequest,
                     ErrorResponse(400, "invalidType", "An incorrect type has been specified")
                 )
+                is ParsingResult.Success -> {
+                    when(val equipment = equipmentService.create(request.facilityId, request.name, parseTypeResult.value)){
+                        CreateEquipmentResult.InvalidFacilityId -> call.respond(
+                            HttpStatusCode.BadRequest,
+                            ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
+                        )
 
-                is CreateEquipmentResult.Success -> call.respond(
-                    HttpStatusCode.Created,
-                    equipment.equipment.toResponse()
-                )
+                        CreateEquipmentResult.NotFindFacilityId -> call.respond(
+                            HttpStatusCode.NotFound,
+                            ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
+                        )
+
+                        CreateEquipmentResult.InvalidName -> call.respond(
+                            HttpStatusCode.BadRequest,
+                            ErrorResponse(400, "invalidName", "An incorrect name has been specified")
+                        )
+
+                        is CreateEquipmentResult.Success -> call.respond(
+                            HttpStatusCode.Created,
+                            equipment.equipment.toResponse()
+                        )
+                    }
+                }
             }
         }
     }
@@ -395,8 +404,26 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
     authenticate("auth-basic") {
         post("/api/measurements") {
             val request = call.receive<MeasurementCreate>()
+            val parseTypeResult = ApiInputParsers.parseMeasurementType(request.type)
+            if (parseTypeResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified")
+                )
+                return@post
+            }
+            val measurementType = (parseTypeResult as ParsingResult.Success<MeasurementType>).value
+            val parseUnitResult = ApiInputParsers.parseMeasurementUnit(request.unit)
+            if (parseUnitResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
+                )
+                return@post
+            }
+            val measurementUnit = (parseUnitResult as ParsingResult.Success<MeasurementUnit>).value
             val monitoringResult =
-                monitoringService.processMeasurement(request.equipmentId, request.type, request.unit, request.value)
+                monitoringService.processMeasurement(request.equipmentId, measurementType, measurementUnit, request.value)
 
             when (monitoringResult) {
                 is MonitoringServiceResult.MeasurementCreateError -> when (monitoringResult.measurementResult) {
@@ -437,16 +464,6 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
                         )
                     )
 
-                    CreateMeasurementResult.InvalidType -> call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified")
-                    )
-
-                    CreateMeasurementResult.InvalidUnit -> call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
-                    )
-
                     CreateMeasurementResult.InvalidValue -> call.respond(
                         HttpStatusCode.BadRequest,
                         ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
@@ -460,6 +477,11 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
                     is CreateMeasurementResult.Success -> call.respond(
                         HttpStatusCode.Created,
                         monitoringResult.measurementResult.measurement.toResponse()
+                    )
+
+                    CreateMeasurementResult.NotFindMeasurementType -> call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorResponse(404, "notFindMeasurementType", "The specified Measurement Type does not exist")
                     )
                 }
 
@@ -475,6 +497,11 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
                 is MonitoringServiceResult.IncidentCreateError -> call.respond(
                     HttpStatusCode.InternalServerError,
                     ErrorResponse(500, "incidentCreateError", "Measurement was created, but incident creation failed")
+                )
+
+                is MonitoringServiceResult.OutboxPersistenceError -> call.respond(
+                    HttpStatusCode.InternalServerError,
+                    ErrorResponse(500, "outboxPersistenceError", "Measurement event could not be stored")
                 )
 
                 is MonitoringServiceResult.SuccessWithIncident -> call.respond(
@@ -551,14 +578,46 @@ fun Route.incidentRoutes(incidentService: IncidentService){
     authenticate("auth-basic") {
         post("/api/incidents") {
             val request = call.receive<IncidentCreate>()
+            val typeResult = ApiInputParsers.parseIncidentType(request.type)
+            if (typeResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidType", "An incorrect incident type has been specified")
+                )
+                return@post
+            }
+            val severityResult = ApiInputParsers.parseIncidentSeverity(request.severity)
+            if (severityResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidSeverity", "An incorrect incident severity has been specified")
+                )
+                return@post
+            }
+            val measurementTypeResult = ApiInputParsers.parseMeasurementType(request.measurementType)
+            if (measurementTypeResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidMeasurementType", "An incorrect measurement type has been specified")
+                )
+                return@post
+            }
+            val measurementUnitResult = ApiInputParsers.parseMeasurementUnit(request.measurementUnit)
+            if (measurementUnitResult is ParsingResult.Error) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "invalidMeasurementUnit", "An incorrect measurement unit has been specified")
+                )
+                return@post
+            }
             val incident = incidentService.create(
                 facilityId = request.facilityId,
                 equipmentId = request.equipmentId,
                 measurementId = request.measurementId,
-                type = request.type,
-                severity = request.severity,
-                measurementType = request.measurementType,
-                measurementUnit = request.measurementUnit,
+                type = (typeResult as ParsingResult.Success<IncidentType>).value,
+                severity = (severityResult as ParsingResult.Success<IncidentSeverity>).value,
+                measurementType = (measurementTypeResult as ParsingResult.Success<MeasurementType>).value,
+                measurementUnit = (measurementUnitResult as ParsingResult.Success<MeasurementUnit>).value,
                 value = request.value
             )
 
@@ -576,26 +635,6 @@ fun Route.incidentRoutes(incidentService: IncidentService){
                 IncidentServiceResult.InvalidMeasurementId -> call.respond(
                     HttpStatusCode.BadRequest,
                     ErrorResponse(400, "invalidMeasurementId", "An incorrect Measurement ID has been specified")
-                )
-
-                IncidentServiceResult.InvalidType -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidType", "An incorrect incident type has been specified")
-                )
-
-                IncidentServiceResult.InvalidSeverity -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidSeverity", "An incorrect incident severity has been specified")
-                )
-
-                IncidentServiceResult.InvalidMeasurementType -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidMeasurementType", "An incorrect measurement type has been specified")
-                )
-
-                IncidentServiceResult.InvalidMeasurementUnit -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidMeasurementUnit", "An incorrect measurement unit has been specified")
                 )
 
                 IncidentServiceResult.NotFindFacilityId -> call.respond(

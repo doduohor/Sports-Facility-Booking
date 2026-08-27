@@ -129,8 +129,8 @@ class IncidentPolicy{
         )
 
     fun detect(measurement: Measurement): IncidentPolicyResult{
-        val incidentRules = incidentRules[measurement.type] ?: return IncidentPolicyResult.NotIncident
-        val incidentRule = incidentRules.find { it.contains(measurement.value)  } ?: return IncidentPolicyResult.NotIncident
+        val incidentRules = incidentRules[measurement.measurementReading.type] ?: return IncidentPolicyResult.NotIncident
+        val incidentRule = incidentRules.find { it.contains(measurement.measurementReading.value)  } ?: return IncidentPolicyResult.NotIncident
         return IncidentPolicyResult.NeedIncident(incidentRule.toRequired())
     }
 }

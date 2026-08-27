@@ -6,4 +6,8 @@ data class BookingTimeInterval(val startTime: Instant, val endTime: Instant) {
     init {
         require(startTime < endTime) { "The end time must be later than the start time" }
     }
+
+    fun overlaps(timeInterval: BookingTimeInterval): Boolean =
+        this.startTime < timeInterval.endTime && this.endTime > timeInterval.startTime
 }
+

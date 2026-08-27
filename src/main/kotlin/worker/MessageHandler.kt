@@ -1,14 +1,15 @@
 package com.doduohor.worker
 
 import com.doduohor.domain.model.IncidentSeverity
+import com.doduohor.domain.shared.Clock
 import com.doduohor.events.IncidentEventPayload
 import com.doduohor.events.MeasurementEventPayload
 import com.doduohor.infrastructure.messaging.RabbitMqEvent
-import com.doduohor.infrastructure.messaging.RabbitMqEventType
 import com.doduohor.infrastructure.notification.NotificationSender
 import com.doduohor.infrastructure.notification.NotificationSenderResult
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.EventHistoryStatus
+import com.doduohor.events.IntegrationEventType
 import com.doduohor.repository.mongo.EventHistoryRepository
 import com.doduohor.repository.mongo.MarkProcessedResult
 import com.doduohor.repository.mongo.MarkStartProcessingResult
@@ -16,11 +17,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import org.slf4j.LoggerFactory
-import java.time.Instant
 
 class MessageHandler(
     private val notificationSender: NotificationSender,
-    private val eventHistoryRepository: EventHistoryRepository
+    private val eventHistoryRepository: EventHistoryRepository,
+    private val clock: Clock
 ) {
     private val logger = LoggerFactory.getLogger("MessageHandler")
     suspend fun handle(message: String): MessageHandlerResult{
@@ -28,14 +29,15 @@ class MessageHandler(
         try{
             val rabbitEvent = Json.decodeFromString<RabbitMqEvent>(message)
             eventId = rabbitEvent.eventId
+            val startedAt = clock.now().toString()
             when (eventHistoryRepository.tryStartProcessing(
                 EventHistoryDocument(
                     eventId = rabbitEvent.eventId,
                     eventType = rabbitEvent.eventType.name,
                     eventCreatedAt = rabbitEvent.createdAt,
-                    receivedAt = Instant.now().toString(),
+                    receivedAt = startedAt,
                     processedAt = null,
-                    processingStartedAt = Instant.now().toString(),
+                    processingStartedAt = startedAt,
                     data = rabbitEvent.data.jsonObject,
                     status = EventHistoryStatus.PROCESSING,
                     errorMessage = null,
@@ -52,12 +54,12 @@ class MessageHandler(
             }
 
             val result = when(rabbitEvent.eventType){
-                RabbitMqEventType.MEASUREMENT_CREATED ->
+                IntegrationEventType.MEASUREMENT_CREATED ->
                 {
                     logger.info("Measurement created: {}", Json.decodeFromJsonElement<MeasurementEventPayload>(rabbitEvent.data))
                     MessageHandlerResult.Success
                 }
-                RabbitMqEventType.INCIDENT_CREATED ->
+                IntegrationEventType.INCIDENT_CREATED ->
                 {
                     val incidentPayload = Json.decodeFromJsonElement<IncidentEventPayload>(rabbitEvent.data)
                     logger.info("Incident created: {}", incidentPayload)

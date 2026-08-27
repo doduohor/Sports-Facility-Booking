@@ -1,5 +1,6 @@
 package com.doduohor.repository.mongo
 
+import com.doduohor.domain.shared.Clock
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.EventHistoryStatus
 import com.doduohor.events.EventProcessingPolicy
@@ -19,7 +20,8 @@ import org.bson.Document
 import java.time.Instant
 
 class MongoEventHistoryRepository(
-    database: MongoDatabase
+    database: MongoDatabase,
+    private val clock: Clock
 ) : EventHistoryRepository {
     private val collection = database.getCollection<Document>("event_history")
 
@@ -32,13 +34,14 @@ class MongoEventHistoryRepository(
 
     override suspend fun tryStartProcessing(event: EventHistoryDocument): MarkStartProcessingResult {
         try {
+            val now = clock.now().toString()
             collection.insertOne(
                 event.copy(
                     status = EventHistoryStatus.PROCESSING,
                     attempt = 1,
                     processedAt = null,
                     errorMessage = null,
-                    processingStartedAt = Instant.now().toString()
+                    processingStartedAt = now
                 ).toDocument()
             )
             return MarkStartProcessingResult.Started
@@ -66,7 +69,8 @@ class MongoEventHistoryRepository(
             ?: return MarkStartProcessingResult.AttemptsExceeded
         val startedAt = existingEvent.getString("processingStartedAt")
             ?: return MarkStartProcessingResult.AlreadyProcessing
-        val staleBefore = Instant.now().minusSeconds(EventProcessingPolicy.PROCESSING_TIMEOUT_SECONDS)
+        val now = clock.now()
+        val staleBefore = now.minusSeconds(EventProcessingPolicy.PROCESSING_TIMEOUT_SECONDS)
 
         if (!Instant.parse(startedAt).isBefore(staleBefore)) {
             return MarkStartProcessingResult.AlreadyProcessing
@@ -84,7 +88,7 @@ class MongoEventHistoryRepository(
             ),
             combine(
                 set("attempt", currentAttempt + 1),
-                set("processingStartedAt", Instant.now().toString()),
+                set("processingStartedAt", now.toString()),
                 set("processedAt", null),
                 set("errorMessage", null)
             )
@@ -113,6 +117,7 @@ class MongoEventHistoryRepository(
             return MarkStartProcessingResult.AttemptsExceeded
         }
 
+        val now = clock.now().toString()
         val updateResult = collection.updateOne(
             Filters.and(
                 eq("eventId", eventId),
@@ -122,8 +127,8 @@ class MongoEventHistoryRepository(
             combine(
                 set("status", EventHistoryStatus.PROCESSING.name),
                 set("attempt", currentAttempt + 1),
-                set("receivedAt", Instant.now().toString()),
-                set("processingStartedAt", Instant.now().toString()),
+                set("receivedAt", now),
+                set("processingStartedAt", now),
                 set("processedAt", null),
                 set("errorMessage", null)
             )
@@ -149,7 +154,7 @@ class MongoEventHistoryRepository(
             ),
             combine(
                 set("status", EventHistoryStatus.PROCESSED.name),
-                set("processedAt", Instant.now().toString()),
+                set("processedAt", clock.now().toString()),
                 set("errorMessage", null)
             )
         )
@@ -172,7 +177,7 @@ class MongoEventHistoryRepository(
             ),
             combine(
                 set("status", EventHistoryStatus.FAILED.name),
-                set("processedAt", Instant.now().toString()),
+                set("processedAt", clock.now().toString()),
                 set("errorMessage", errorMessage)
             )
         )

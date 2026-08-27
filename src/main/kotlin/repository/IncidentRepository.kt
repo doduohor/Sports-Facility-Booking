@@ -5,13 +5,17 @@ import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.FacilityId
+import com.doduohor.domain.shared.MeasurementId
+import com.doduohor.domain.shared.IncidentId
 
 
 interface IncidentRepository {
     fun create(
-        facilityId: Long,
-        equipmentId: Long,
-        measurementId: Long,
+        facilityId: FacilityId,
+        equipmentId: EquipmentId,
+        measurementId: MeasurementId,
         type: IncidentType,
         severity: IncidentSeverity,
         measurementType: MeasurementType,
@@ -19,8 +23,8 @@ interface IncidentRepository {
         value: Double,
     ): Incident
 
-    fun findByIncidentId(incidentId: Long): Incident?
-    fun findByFacilityId(facilityId: Long): List<Incident>
-    fun findByEquipmentId(equipmentId: Long): List<Incident>
+    fun findByIncidentId(incidentId: IncidentId): Incident?
+    fun findByFacilityId(facilityId: FacilityId): List<Incident>
+    fun findByEquipmentId(equipmentId: EquipmentId): List<Incident>
     fun findAll(): List<Incident>
 }

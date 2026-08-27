@@ -5,8 +5,8 @@ import com.doduohor.domain.model.Equipment
 
 fun Equipment.toResponse() : EquipmentResponse =
     EquipmentResponse(
-        id = id,
-        facilityId = facilityId,
+        id = id.value,
+        facilityId = facilityId.value,
         name = name,
         type = type.toString().lowercase(),
         status = status.toString().lowercase()

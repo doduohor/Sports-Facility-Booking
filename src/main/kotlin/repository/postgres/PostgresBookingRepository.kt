@@ -1,61 +1,80 @@
 package com.doduohor.repository.postgres
 
 import com.doduohor.domain.model.Booking
+import com.doduohor.domain.model.BookingCreationResult
 import com.doduohor.domain.model.BookingStatus
 import com.doduohor.domain.model.BookingTimeInterval
 import com.doduohor.infrastructure.database.postgres.BookingTable
 import com.doduohor.repository.BookingRepository
+import com.doduohor.domain.shared.BookingId
+import com.doduohor.domain.shared.Clock
+import com.doduohor.domain.shared.CustomerId
+import com.doduohor.domain.shared.FacilityId
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import java.time.Instant
-import java.time.temporal.ChronoUnit
+import java.sql.SQLException
 
-class PostgresBookingRepository(private val database: Database): BookingRepository{
-    override fun create(
-        facilityId: Long,
-        customerId: Int,
+class PostgresBookingRepository(
+    private val database: Database,
+    private val clock: Clock
+    ): BookingRepository{
+    override fun createIfAvailable(
+        facilityId: FacilityId,
+        customerId: CustomerId,
         timeInterval: BookingTimeInterval
-    ): Booking = transaction (database) {
+    ): BookingCreationResult<Booking> = try {
+        transaction(database) {
 
-        val createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS)
-        val insertedRow = BookingTable.insert {
-            it[BookingTable.facilityId] = facilityId
-            it[BookingTable.customerId] = customerId
-            it[BookingTable.startTime] = timeInterval.startTime
-            it[BookingTable.endTime] = timeInterval.endTime
-            it[BookingTable.status] = Booking.DEFAULT_STATUS.name
-            it[BookingTable.createdAt] = createdAt
+            val createdAt = clock.now()
+            val insertedRow = BookingTable.insert {
+                it[BookingTable.facilityId] = facilityId.value
+                it[BookingTable.customerId] = customerId.value
+                it[BookingTable.startTime] = timeInterval.startTime
+                it[BookingTable.endTime] = timeInterval.endTime
+                it[BookingTable.status] = Booking.DEFAULT_STATUS.name
+                it[BookingTable.createdAt] = createdAt
+            }
+
+            BookingCreationResult.Success(
+                Booking.createNew(
+                    id = BookingId(insertedRow[BookingTable.id]),
+                    facilityId = facilityId,
+                    customerId = customerId,
+                    timeInterval = timeInterval,
+                    createdAt = createdAt
+                )
+            )
         }
 
-        val generatedId = insertedRow[BookingTable.id]
+    }catch (exception: ExposedSQLException) {
+        val sqlException = exception.cause as? SQLException
 
-        Booking.createNew(
-            id = generatedId,
-            facilityId = facilityId,
-            customerId = customerId,
-            timeInterval = timeInterval,
-            createdAt = createdAt
-        )
+        if (sqlException?.sqlState == "23P01") {
+            BookingCreationResult.UnavailableRange
+        } else {
+            throw exception
+        }
     }
 
-    override fun findByBookingId(id: Long): Booking? = transaction (database) {
+    override fun findByBookingId(id: BookingId): Booking? = transaction (database) {
         val foundRow = BookingTable.selectAll()
-            .where { BookingTable.id eq id}
+            .where { BookingTable.id eq id.value}
             .singleOrNull()
             ?: return@transaction null
         toBooking(foundRow)
     }
 
-    override fun findByFacilityId(id: Long): List<Booking> = transaction(database) {
+    override fun findByFacilityId(id: FacilityId): List<Booking> = transaction(database) {
         BookingTable.selectAll()
-            .where { BookingTable.facilityId eq id }
+            .where { BookingTable.facilityId eq id.value }
             .map{ row -> toBooking(row)}
     }
 
@@ -63,22 +82,12 @@ class PostgresBookingRepository(private val database: Database): BookingReposito
         BookingTable.selectAll().map{ row -> toBooking(row) }
     }
 
-    override fun findOverlappingByFacilityId(
-        facilityId: Long,
-        timeInterval: BookingTimeInterval
-    ): Boolean = transaction (database){
-        BookingTable.selectAll()
-            .where { (BookingTable.facilityId eq facilityId) and
-                    (BookingTable.startTime less timeInterval.endTime) and
-                    (BookingTable.endTime greater timeInterval.startTime)
-            }.any()
-    }
 
     private fun toBooking(row: ResultRow): Booking {
         return Booking(
-            id = row[BookingTable.id],
-            facilityId = row[BookingTable.facilityId],
-            customerId = row[BookingTable.customerId],
+            id = BookingId(row[BookingTable.id]),
+            facilityId = FacilityId(row[BookingTable.facilityId]),
+            customerId = CustomerId(row[BookingTable.customerId]),
             timeInterval = BookingTimeInterval(
                 startTime = row[BookingTable.startTime],
                 endTime = row[BookingTable.endTime]
@@ -87,5 +96,4 @@ class PostgresBookingRepository(private val database: Database): BookingReposito
             createdAt = row[BookingTable.createdAt]
         )
     }
-
 }

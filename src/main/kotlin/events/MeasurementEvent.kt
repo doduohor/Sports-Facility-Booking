@@ -4,11 +4,11 @@ import com.doduohor.domain.model.Measurement
 
 fun Measurement.toEventPayload(): MeasurementEventPayload{
     return MeasurementEventPayload(
-        id = this.id,
-        equipmentId = this.equipmentId,
-        type = this.type.name.lowercase(),
-        unit = this.unit.name.lowercase(),
-        value = this.value,
+        id = this.id.value,
+        equipmentId = this.equipmentId.value,
+        type = this.measurementReading.type.name.lowercase(),
+        unit = this.measurementReading.unit.name.lowercase(),
+        value = this.measurementReading.value,
         createdAt = this.createdAt.toString()
     )
 }

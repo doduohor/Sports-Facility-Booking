@@ -4,10 +4,11 @@ import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.EventHistoryStatus
 import com.doduohor.events.IncidentEventPayload
+import com.doduohor.events.IntegrationEventType
 import com.doduohor.infrastructure.messaging.RabbitMqEvent
-import com.doduohor.infrastructure.messaging.RabbitMqEventType
 import com.doduohor.infrastructure.notification.NotificationSender
 import com.doduohor.infrastructure.notification.NotificationSenderResult
+import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.repository.mongo.EventHistoryRepository
 import com.doduohor.repository.mongo.MarkFailedResult
 import com.doduohor.repository.mongo.MarkProcessedResult
@@ -22,6 +23,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class MessageHandlerTest {
+    private val fixedInstant = Instant.parse("2026-08-20T12:00:00Z")
+    private val fixedClock = FixedClock(fixedInstant)
+
     private class FakeEventHistoryRepository : EventHistoryRepository {
         val savedEvents = mutableListOf<EventHistoryDocument>()
 
@@ -47,8 +51,7 @@ class MessageHandlerTest {
                         status = EventHistoryStatus.PROCESSING,
                         attempt = 1,
                         processedAt = null,
-                        errorMessage = null,
-                        processingStartedAt = Instant.now().toString()
+                        errorMessage = null
                     )
                 )
                 return MarkStartProcessingResult.Started
@@ -67,8 +70,7 @@ class MessageHandlerTest {
                                 status = EventHistoryStatus.PROCESSING,
                                 attempt = existingEvent.attempt + 1,
                                 processedAt = null,
-                                errorMessage = null,
-                                processingStartedAt = Instant.now().toString()
+                                errorMessage = null
                             )
                         )
                         MarkStartProcessingResult.Started
@@ -119,7 +121,7 @@ class MessageHandlerTest {
     fun `valid measurement created event returns success`() = runBlocking {
         val notificationSender = FakeNotificationSender()
         val historyRepository = FakeEventHistoryRepository()
-        val handler = MessageHandler(notificationSender, historyRepository)
+        val handler = MessageHandler(notificationSender, historyRepository, fixedClock)
         val message = measurementCreatedMessage()
 
         val result = handler.handle(message)
@@ -130,8 +132,21 @@ class MessageHandlerTest {
     }
 
     @Test
+    fun `event history timestamps use injected clock`() = runBlocking {
+        val historyRepository = FakeEventHistoryRepository()
+        val handler = MessageHandler(FakeNotificationSender(), historyRepository, fixedClock)
+
+        val result = handler.handle(measurementCreatedMessage())
+
+        assertEquals(MessageHandlerResult.Success, result)
+        val savedEvent = historyRepository.savedEvents.single()
+        assertEquals(fixedInstant.toString(), savedEvent.receivedAt)
+        assertEquals(fixedInstant.toString(), savedEvent.processingStartedAt)
+    }
+
+    @Test
     fun `unknown event type returns failure`() = runBlocking {
-        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository())
+        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository(), fixedClock)
         val message = """
             {
               "eventType": "BOOKING_CREATED",
@@ -149,7 +164,7 @@ class MessageHandlerTest {
 
     @Test
     fun `broken json returns failure`() = runBlocking {
-        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository())
+        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository(), fixedClock)
         val message = "{ broken json"
 
         val result = handler.handle(message)
@@ -159,10 +174,11 @@ class MessageHandlerTest {
 
     @Test
     fun `measurement created event with invalid payload returns failure`() = runBlocking {
-        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository())
+        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository(), fixedClock)
         val message = Json.encodeToString(
             RabbitMqEvent.create(
-                eventType = RabbitMqEventType.MEASUREMENT_CREATED,
+                eventType = IntegrationEventType.MEASUREMENT_CREATED,
+                clock = fixedClock,
                 data = buildJsonObject {
                     put("id", 1L)
                 }
@@ -177,7 +193,7 @@ class MessageHandlerTest {
     @Test
     fun `incident created with high severity sends notification`() = runBlocking {
         val notificationSender = FakeNotificationSender()
-        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository())
+        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository(), fixedClock)
         val message = incidentCreatedMessage(IncidentSeverity.HIGH)
 
         val result = handler.handle(message)
@@ -189,7 +205,7 @@ class MessageHandlerTest {
     @Test
     fun `incident created with critical severity sends notification`() = runBlocking {
         val notificationSender = FakeNotificationSender()
-        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository())
+        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository(), fixedClock)
         val message = incidentCreatedMessage(IncidentSeverity.CRITICAL)
 
         val result = handler.handle(message)
@@ -202,7 +218,7 @@ class MessageHandlerTest {
     fun `duplicate incident event is processed only once`() = runBlocking {
         val notificationSender = FakeNotificationSender()
         val historyRepository = FakeEventHistoryRepository()
-        val handler = MessageHandler(notificationSender, historyRepository)
+        val handler = MessageHandler(notificationSender, historyRepository, fixedClock)
         val message = incidentCreatedMessage(
             severity = IncidentSeverity.HIGH,
             eventId = "incident-duplicate-test"
@@ -221,7 +237,7 @@ class MessageHandlerTest {
     @Test
     fun `incident created with medium severity does not send notification`() = runBlocking {
         val notificationSender = FakeNotificationSender()
-        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository())
+        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository(), fixedClock)
         val message = incidentCreatedMessage(IncidentSeverity.MEDIUM)
 
         val result = handler.handle(message)
@@ -235,7 +251,7 @@ class MessageHandlerTest {
         val notificationSender = FakeNotificationSender(
             NotificationSenderResult.Failure("test failure")
         )
-        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository())
+        val handler = MessageHandler(notificationSender, FakeEventHistoryRepository(), fixedClock)
         val message = incidentCreatedMessage(IncidentSeverity.HIGH)
 
         val result = handler.handle(message)
@@ -246,10 +262,11 @@ class MessageHandlerTest {
 
     @Test
     fun `incident created event with invalid payload returns failure`() = runBlocking {
-        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository())
+        val handler = MessageHandler(FakeNotificationSender(), FakeEventHistoryRepository(), fixedClock)
         val message = Json.encodeToString(
             RabbitMqEvent.create(
-                eventType = RabbitMqEventType.INCIDENT_CREATED,
+                eventType = IntegrationEventType.INCIDENT_CREATED,
+                clock = fixedClock,
                 data = buildJsonObject {
                     put("id", 1L)
                 }
@@ -264,7 +281,8 @@ class MessageHandlerTest {
     private fun measurementCreatedMessage(): String =
         Json.encodeToString(
             RabbitMqEvent.create(
-                eventType = RabbitMqEventType.MEASUREMENT_CREATED,
+                eventType = IntegrationEventType.MEASUREMENT_CREATED,
+                clock = fixedClock,
                 data = buildJsonObject {
                     put("id", 1L)
                     put("equipmentId", 2L)
@@ -297,12 +315,13 @@ class MessageHandlerTest {
         val event = eventId?.let {
             RabbitMqEvent(
                 eventId = it,
-                eventType = RabbitMqEventType.INCIDENT_CREATED,
+                eventType = IntegrationEventType.INCIDENT_CREATED,
                 createdAt = "2026-08-14T12:00:00Z",
                 data = Json.encodeToJsonElement(payload)
             )
         } ?: RabbitMqEvent.create(
-            eventType = RabbitMqEventType.INCIDENT_CREATED,
+            eventType = IntegrationEventType.INCIDENT_CREATED,
+            clock = fixedClock,
             data = Json.encodeToJsonElement(payload)
         )
 

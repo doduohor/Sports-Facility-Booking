@@ -18,21 +18,20 @@ fun Application.module() {
         .propertyOrNull("database.enabled")
         ?.getString()
         ?.toBoolean() == true
-
-    val databaseFactory = if (databaseEnabled) DatabaseFactory() else null
-    val database = databaseFactory?.connect(DatabaseConfig.from(environment.config))
-    val mongoConnection = MongoFactory.connect(MongoConfig.from(environment.config))
-
-    if (database != null) {
-        transaction(database) {
-            exec("SELECT 1")
-        }
+    check(databaseEnabled) {
+        "PostgreSQL is mandatory: set database.enabled=true"
     }
 
-    databaseFactory?.let { factory ->
-        monitor.subscribe(ApplicationStopping) {
-            factory.close()
-        }
+    val databaseFactory = DatabaseFactory()
+    val database = databaseFactory.connect(DatabaseConfig.from(environment.config))
+    val mongoConnection = MongoFactory.connect(MongoConfig.from(environment.config))
+
+    transaction(database) {
+        exec("SELECT 1")
+    }
+
+    monitor.subscribe(ApplicationStopping) {
+        databaseFactory.close()
     }
 
     monitor.subscribe(ApplicationStopping) {

@@ -1,6 +1,6 @@
 package com.doduohor
 
-import com.doduohor.di.configureKoin
+import com.doduohor.di.configureTestKoin
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.get
@@ -375,6 +375,7 @@ class ServerTest {
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         assertTrue(body.contains("invalidCustomerId"))
+        assertTrue(body.contains("Customer ID is not allowed to create bookings."))
     }
 
     @Test
@@ -1110,7 +1111,7 @@ class ServerTest {
         }
 
         application {
-            configureKoin(null, FakeMessagePublisher())
+            configureTestKoin(FakeMessagePublisher())
             configureSerialization()
             configureStatusPages()
             configureSecurity()

@@ -2,24 +2,22 @@ package com.doduohor.service
 
 import com.doduohor.domain.model.Facility
 import com.doduohor.domain.model.FacilityActivateResult
+import com.doduohor.domain.model.FacilityCreationResult
 import com.doduohor.domain.model.FacilityType
-import com.doduohor.domain.model.activate
+import com.doduohor.domain.shared.FacilityId
 import com.doduohor.repository.FacilityRepository
 
 class FacilityService(private val facilityRepository: FacilityRepository) {
-    fun createFacility(name: String, type: String): CreateFacilityResult {
-        if (name.isBlank()) {
-            return CreateFacilityResult.InvalidName
+    fun createFacility(name: String, type: FacilityType): CreateFacilityResult {
+        return when(val facility = facilityRepository.create(name, type)){
+            is FacilityCreationResult.InvalidName -> CreateFacilityResult.InvalidName
+            is FacilityCreationResult.Success -> CreateFacilityResult.Success(facility.value)
         }
-
-        val facilityType = strToFacilityType(type) ?: return CreateFacilityResult.InvalidType
-        val facility = facilityRepository.create(name, facilityType)
-
-        return CreateFacilityResult.Success(facility)
     }
 
     fun getFacilityById(id: Long): Facility? {
-        return facilityRepository.findById(id)
+        if (id <= 0) return null
+        return facilityRepository.findById(FacilityId(id))
     }
 
     fun getFacilities(): List<Facility> {
@@ -27,7 +25,8 @@ class FacilityService(private val facilityRepository: FacilityRepository) {
     }
 
     fun activateFacility(id: Long): ActivateFacilityResult {
-        val facility = facilityRepository.findById(id) ?: return ActivateFacilityResult.NotFound
+        if (id <= 0) return ActivateFacilityResult.NotFound
+        val facility = facilityRepository.findById(FacilityId(id)) ?: return ActivateFacilityResult.NotFound
         return when (val facilityResult = facility.activate()) {
             FacilityActivateResult.AlreadyActive -> ActivateFacilityResult.AlreadyActive
             FacilityActivateResult.InvalidStatus -> ActivateFacilityResult.InvalidStatus
@@ -42,17 +41,11 @@ class FacilityService(private val facilityRepository: FacilityRepository) {
         }
 
     }
-
-    private fun strToFacilityType(input: String): FacilityType? {
-        val facilityTypes = FacilityType.entries.associateBy { it.name.lowercase() }
-        return facilityTypes[input.lowercase()]
-    }
 }
 
 sealed interface CreateFacilityResult {
     data class Success(val facility: Facility) : CreateFacilityResult
-    data object InvalidName : CreateFacilityResult
-    data object InvalidType : CreateFacilityResult
+    data object InvalidName: CreateFacilityResult
 }
 
 sealed interface ActivateFacilityResult {

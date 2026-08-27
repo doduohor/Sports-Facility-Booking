@@ -40,3 +40,8 @@ bin/
 graphify-out/
 .planning/
 .understand-anything
+.planning
+
+docs/*
+.superpowers/*
+AGENTS.md

@@ -1,5 +1,7 @@
 package com.doduohor.domain.model
 
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.MeasurementId
 import java.time.Instant
 
 enum class MeasurementType{
@@ -7,12 +9,24 @@ enum class MeasurementType{
     HUMIDITY,
     CO2,
     SMOKE,
+
+    ;
+
+    companion object {
+        fun fromString(value: String): MeasurementType? =
+            entries.firstOrNull { it.name.equals(value.trim(), true) }
+    }
 }
 
 enum class MeasurementUnit{
     CELSIUS,
     PERCENT,
-    PPM
+    PPM;
+
+    companion object {
+        fun fromString(value: String): MeasurementUnit? =
+            entries.firstOrNull { it.name.equals(value.trim(), true) }
+    }
 }
 
 
@@ -28,23 +42,20 @@ data class ValueRange(
 fun ValueRange.contains(value: Double): Boolean = value in min..max
 
 
+
 data class Measurement(
-    val id: Long,
-    val equipmentId: Long,
-    val type: MeasurementType,
-    val unit: MeasurementUnit,
-    val value: Double,
+    val id: MeasurementId,
+    val equipmentId: EquipmentId,
+    val measurementReading: MeasurementReading,
     val createdAt: Instant
 ) {
     companion object{
-        fun create(id: Long, equipmentId: Long, type: MeasurementType, unit: MeasurementUnit, value: Double): Measurement{
+        fun create(id: MeasurementId, equipmentId: EquipmentId, measurementReading: MeasurementReading, createdAt: Instant): Measurement{
             return Measurement(
                 id = id,
                 equipmentId = equipmentId,
-                type = type,
-                unit = unit,
-                value = value,
-                createdAt = Instant.now()
+                measurementReading = measurementReading,
+                createdAt = createdAt
             )
         }
     }

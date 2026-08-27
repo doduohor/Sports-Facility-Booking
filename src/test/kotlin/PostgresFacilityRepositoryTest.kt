@@ -5,7 +5,7 @@ import com.doduohor.domain.model.Facility
 import com.doduohor.domain.model.FacilityActivateResult
 import com.doduohor.domain.model.FacilityStatus
 import com.doduohor.domain.model.FacilityType
-import com.doduohor.domain.model.activate
+import com.doduohor.domain.shared.FacilityId
 import com.doduohor.repository.postgres.PostgresFacilityRepository
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
@@ -71,9 +71,9 @@ class PostgresFacilityRepositoryTest {
         val createdFacility = repository.create(
             facilityName = "Main Gym",
             facilityType = FacilityType.GYM
-        )
+        ).getOrThrow()
 
-        assertTrue(createdFacility.id > 0)
+        assertTrue(createdFacility.id.value > 0)
         assertEquals("Main Gym", createdFacility.name)
         assertEquals(FacilityType.GYM, createdFacility.type)
         assertEquals(FacilityStatus.INACTIVE, createdFacility.status)
@@ -87,7 +87,7 @@ class PostgresFacilityRepositoryTest {
     fun `findById returns null when facility does not exist`() {
         val repository = PostgresFacilityRepository(database)
 
-        val foundFacility = repository.findById(999_999)
+        val foundFacility = repository.findById(FacilityId(999_999))
 
         assertNull(foundFacility)
     }
@@ -98,7 +98,7 @@ class PostgresFacilityRepositoryTest {
         val createdFacility = repository.create(
             facilityName = "Pool",
             facilityType = FacilityType.POOL
-        )
+        ).getOrThrow()
         val activatedFacility = createdFacility.activate().successFacility()
 
         val savedFacility = repository.save(activatedFacility)
@@ -112,7 +112,7 @@ class PostgresFacilityRepositoryTest {
     fun `save returns null when facility does not exist`() {
         val repository = PostgresFacilityRepository(database)
         val missingFacility = Facility(
-            id = 999_999,
+            id = FacilityId(999_999),
             name = "Missing facility",
             type = FacilityType.STADIUM,
             status = FacilityStatus.INACTIVE
@@ -129,11 +129,11 @@ class PostgresFacilityRepositoryTest {
         val firstFacility = repository.create(
             facilityName = "Gym",
             facilityType = FacilityType.GYM
-        )
+        ).getOrThrow()
         val secondFacility = repository.create(
             facilityName = "Stadium",
             facilityType = FacilityType.STADIUM
-        )
+        ).getOrThrow()
 
         val facilities = repository.findAll()
 
@@ -152,7 +152,7 @@ class PostgresFacilityRepositoryTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            repository.findById(facilityId)
+            repository.findById(FacilityId(facilityId))
         }
     }
 
@@ -168,7 +168,7 @@ class PostgresFacilityRepositoryTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            repository.findById(facilityId)
+            repository.findById(FacilityId(facilityId))
         }
     }
 

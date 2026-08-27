@@ -2,11 +2,18 @@ package com.doduohor
 
 import com.doduohor.domain.model.EquipmentType
 import com.doduohor.domain.model.FacilityType
+import com.doduohor.domain.model.IncidentSeverity
+import com.doduohor.domain.model.IncidentType
+import com.doduohor.domain.model.MeasurementType
+import com.doduohor.domain.model.MeasurementUnit
 import com.doduohor.repository.InMemoryEquipmentRepository
 import com.doduohor.repository.InMemoryFacilityRepository
 import com.doduohor.repository.InMemoryIncidentRepository
+import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.service.IncidentService
 import com.doduohor.service.IncidentServiceResult
+import com.doduohor.service.CreateEquipmentResult
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -15,17 +22,17 @@ class IncidentServiceTest {
     @Test
     fun `create incident returns success for valid data`() {
         val fixture = createFixture()
-        val facility = fixture.facilityRepository.create("Central Pool", FacilityType.POOL)
-        val equipment = fixture.equipmentRepository.create(facility.id, "Fire alarm", EquipmentType.FIRE_ALARM)
+        val facility = fixture.facilityRepository.create("Central Pool", FacilityType.POOL).getOrThrow()
+        val equipment = assertIs<CreateEquipmentResult.Success>(fixture.equipmentRepository.create(facility.id, "Fire alarm", EquipmentType.FIRE_ALARM)).equipment
 
         val result = fixture.service.create(
-            facilityId = facility.id,
-            equipmentId = equipment.id,
+            facilityId = facility.id.value,
+            equipmentId = equipment.id.value,
             measurementId = 400,
-            type = "SMOKE_DETECTED",
-            severity = "CRITICAL",
-            measurementType = "SMOKE",
-            measurementUnit = "PERCENT",
+            type = IncidentType.SMOKE_DETECTED,
+            severity = IncidentSeverity.CRITICAL,
+            measurementType = MeasurementType.SMOKE,
+            measurementUnit = MeasurementUnit.PERCENT,
             value = 80.0
         )
 
@@ -39,31 +46,13 @@ class IncidentServiceTest {
         val fixture = createFixture()
 
         assertIs<IncidentServiceResult.InvalidFacilityId>(
-            fixture.service.create(0, 200, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+            fixture.service.create(0, 200, 400, IncidentType.SMOKE_DETECTED, IncidentSeverity.CRITICAL, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 80.0)
         )
         assertIs<IncidentServiceResult.InvalidEquipmentId>(
-            fixture.service.create(1, 0, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+            fixture.service.create(1, 0, 400, IncidentType.SMOKE_DETECTED, IncidentSeverity.CRITICAL, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 80.0)
         )
         assertIs<IncidentServiceResult.InvalidMeasurementId>(
-            fixture.service.create(1, 200, 0, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
-        )
-    }
-
-    @Test
-    fun `create incident rejects unknown enum values`() {
-        val fixture = createFixture()
-
-        assertIs<IncidentServiceResult.InvalidType>(
-            fixture.service.create(1, 200, 400, "UNKNOWN", "CRITICAL", "SMOKE", "PERCENT", 80.0)
-        )
-        assertIs<IncidentServiceResult.InvalidSeverity>(
-            fixture.service.create(1, 200, 400, "SMOKE_DETECTED", "UNKNOWN", "SMOKE", "PERCENT", 80.0)
-        )
-        assertIs<IncidentServiceResult.InvalidMeasurementType>(
-            fixture.service.create(1, 200, 400, "SMOKE_DETECTED", "CRITICAL", "UNKNOWN", "PERCENT", 80.0)
-        )
-        assertIs<IncidentServiceResult.InvalidMeasurementUnit>(
-            fixture.service.create(1, 200, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "UNKNOWN", 80.0)
+            fixture.service.create(1, 200, 0, IncidentType.SMOKE_DETECTED, IncidentSeverity.CRITICAL, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 80.0)
         )
     }
 
@@ -72,30 +61,30 @@ class IncidentServiceTest {
         val fixture = createFixture()
 
         assertIs<IncidentServiceResult.NotFindFacilityId>(
-            fixture.service.create(1, 200, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+            fixture.service.create(1, 200, 400, IncidentType.SMOKE_DETECTED, IncidentSeverity.CRITICAL, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 80.0)
         )
 
-        val facility = fixture.facilityRepository.create("Central Pool", FacilityType.POOL)
+        val facility = fixture.facilityRepository.create("Central Pool", FacilityType.POOL).getOrThrow()
         assertIs<IncidentServiceResult.NotFindEquipmentId>(
-            fixture.service.create(facility.id, 999999, 400, "SMOKE_DETECTED", "CRITICAL", "SMOKE", "PERCENT", 80.0)
+            fixture.service.create(facility.id.value, 999999, 400, IncidentType.SMOKE_DETECTED, IncidentSeverity.CRITICAL, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 80.0)
         )
     }
 
     @Test
     fun `create incident rejects equipment from another facility`() {
         val fixture = createFixture()
-        val pool = fixture.facilityRepository.create("Central Pool", FacilityType.POOL)
-        val gym = fixture.facilityRepository.create("Central Gym", FacilityType.GYM)
-        val equipment = fixture.equipmentRepository.create(gym.id, "Gym ventilation", EquipmentType.VENTILATION)
+        val pool = fixture.facilityRepository.create("Central Pool", FacilityType.POOL).getOrThrow()
+        val gym = fixture.facilityRepository.create("Central Gym", FacilityType.GYM).getOrThrow()
+        val equipment = assertIs<CreateEquipmentResult.Success>(fixture.equipmentRepository.create(gym.id, "Gym ventilation", EquipmentType.VENTILATION)).equipment
 
         val result = fixture.service.create(
-            facilityId = pool.id,
-            equipmentId = equipment.id,
+            facilityId = pool.id.value,
+            equipmentId = equipment.id.value,
             measurementId = 400,
-            type = "HIGH_CO2",
-            severity = "HIGH",
-            measurementType = "CO2",
-            measurementUnit = "PPM",
+            type = IncidentType.HIGH_CO2,
+            severity = IncidentSeverity.HIGH,
+            measurementType = MeasurementType.CO2,
+            measurementUnit = MeasurementUnit.PPM,
             value = 1200.0
         )
 
@@ -105,7 +94,7 @@ class IncidentServiceTest {
     private fun createFixture(): IncidentServiceFixture {
         val facilityRepository = InMemoryFacilityRepository()
         val equipmentRepository = InMemoryEquipmentRepository()
-        val incidentRepository = InMemoryIncidentRepository()
+        val incidentRepository = InMemoryIncidentRepository(FixedClock(Instant.parse("2026-08-20T12:00:00Z")))
 
         return IncidentServiceFixture(
             facilityRepository = facilityRepository,

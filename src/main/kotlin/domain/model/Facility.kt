@@ -1,9 +1,16 @@
 package com.doduohor.domain.model
 
+import com.doduohor.domain.shared.FacilityId
+
 enum class FacilityType {
     GYM,
     POOL,
-    STADIUM
+    STADIUM;
+
+    companion object{
+        fun fromString(value: String): FacilityType? =
+            entries.firstOrNull { it.name.equals(value.trim(), true) }
+    }
 }
 
 enum class FacilityStatus {
@@ -12,55 +19,46 @@ enum class FacilityStatus {
     MAINTENANCE
 }
 
-data class FacilityPrepare(
-    val name: String,
-    val type: FacilityType,
-){
-    companion object{
-        fun prepareNew(name: String, type: FacilityType): FacilityPrepare {
-            require(name.isNotBlank()) { "Facility name must not be blank" }
-
-            return FacilityPrepare(
-                name = name.trim(),
-                type = type
-            )
-        }
-    }
-}
-
 data class Facility(
-    val id: Long,
+    val id: FacilityId,
     val name: String,
     val type: FacilityType,
     val status: FacilityStatus
 ) {
+    fun canAcceptBooking(): Boolean = this.status == FacilityStatus.ACTIVE
+    fun activate(): FacilityActivateResult {
+        return when (status) {
+            FacilityStatus.INACTIVE -> FacilityActivateResult.Success(copy(status = FacilityStatus.ACTIVE))
+            FacilityStatus.MAINTENANCE -> FacilityActivateResult.InvalidStatus
+            FacilityStatus.ACTIVE -> FacilityActivateResult.AlreadyActive
+        }
+    }
+
     companion object {
         val DEFAULT_STATUS = FacilityStatus.INACTIVE
-        fun createNew(id: Long, name: String, type: FacilityType): Facility {
-            require(name.isNotBlank()) { "Facility name must not be blank" }
-
-            return Facility(
-                id = id,
-                name = name.trim(),
-                type = type,
-                status = DEFAULT_STATUS
-            )
+        fun createNew(id: FacilityId, name: String, type: FacilityType): FacilityCreationResult<Facility> {
+            return if(name.isBlank())
+                FacilityCreationResult.InvalidName
+            else
+                FacilityCreationResult.Success(
+                    Facility(
+                        id = id,
+                        name = name.trim(),
+                        type = type,
+                        status = DEFAULT_STATUS
+                    )
+                )
         }
     }
 }
-
-fun Facility.activate(): FacilityActivateResult {
-    return when (status) {
-        FacilityStatus.INACTIVE -> FacilityActivateResult.Success(copy(status = FacilityStatus.ACTIVE))
-        FacilityStatus.MAINTENANCE -> FacilityActivateResult.InvalidStatus
-        FacilityStatus.ACTIVE -> FacilityActivateResult.AlreadyActive
-    }
-}
-
-fun Facility.canBeBooked() = status == FacilityStatus.ACTIVE
 
 sealed interface FacilityActivateResult {
     data class Success(val facility: Facility) : FacilityActivateResult
     data object InvalidStatus : FacilityActivateResult
     data object AlreadyActive : FacilityActivateResult
+}
+
+sealed interface FacilityCreationResult<out T>{
+    data class Success<T>(val value: T): FacilityCreationResult<T>
+    data object InvalidName: FacilityCreationResult<Nothing>
 }

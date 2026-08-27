@@ -4,27 +4,34 @@ import com.doduohor.domain.model.Equipment
 import com.doduohor.domain.model.EquipmentType
 import com.doduohor.repository.EquipmentRepository
 import com.doduohor.repository.FacilityRepository
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.FacilityId
 
 class EquipmentService(private val equipmentRepository: EquipmentRepository, private val facilityRepository: FacilityRepository) {
-    fun create(facilityId: Long, name: String, type: String): CreateEquipmentResult {
+    fun create(facilityId: Long, name: String, type: EquipmentType): CreateEquipmentResult {
         if(facilityId <= 0) return CreateEquipmentResult.InvalidFacilityId
         if(name.isBlank()) return CreateEquipmentResult.InvalidName
-        if(type.isBlank()) return CreateEquipmentResult.InvalidType
 
-        val equipmentType = typeIsValid(type) ?: return CreateEquipmentResult.InvalidType
-        val facilityIdSearch = facilityRepository.findById(facilityId) ?: return CreateEquipmentResult.NotFindFacilityId
-
-        return CreateEquipmentResult.Success(equipmentRepository.create(facilityIdSearch.id, name, equipmentType))
+        val facilityIdTyped = FacilityId(facilityId)
+        val facilityIdSearch = facilityRepository.findById(facilityIdTyped) ?: return CreateEquipmentResult.NotFindFacilityId
+        return when(val equipment = equipmentRepository.create(facilityIdSearch.id, name, type)){
+            CreateEquipmentResult.InvalidFacilityId -> CreateEquipmentResult.InvalidFacilityId
+            CreateEquipmentResult.InvalidName -> CreateEquipmentResult.InvalidName
+            CreateEquipmentResult.NotFindFacilityId -> CreateEquipmentResult.NotFindFacilityId
+            is CreateEquipmentResult.Success -> CreateEquipmentResult.Success(equipment.equipment)
+        }
     }
 
     fun findByEquipmentId(equipmentId: Long): Equipment? {
-        return equipmentRepository.findByEquipmentId(equipmentId)
+        if (equipmentId <= 0) return null
+        return equipmentRepository.findByEquipmentId(EquipmentId(equipmentId))
     }
 
     fun findByFacilityId(facilityId: Long): FindEquipmentsByFacilityIdResult {
         if(facilityId <= 0) return FindEquipmentsByFacilityIdResult.InvalidFacilityId
 
-        val facility = facilityRepository.findById(facilityId) ?: return FindEquipmentsByFacilityIdResult.NotFindFacilityId
+        val facilityIdTyped = FacilityId(facilityId)
+        val facility = facilityRepository.findById(facilityIdTyped) ?: return FindEquipmentsByFacilityIdResult.NotFindFacilityId
         return FindEquipmentsByFacilityIdResult.Success(equipmentRepository.findByFacilityId(facility.id))
     }
 
@@ -32,9 +39,6 @@ class EquipmentService(private val equipmentRepository: EquipmentRepository, pri
         return equipmentRepository.findAll()
     }
 
-    private fun typeIsValid(type: String): EquipmentType? {
-        return EquipmentType.entries.find { it.name == type.uppercase() }
-    }
 }
 
 sealed interface CreateEquipmentResult {
@@ -42,7 +46,6 @@ sealed interface CreateEquipmentResult {
     data object InvalidFacilityId: CreateEquipmentResult
     data object NotFindFacilityId: CreateEquipmentResult
     data object InvalidName: CreateEquipmentResult
-    data object InvalidType: CreateEquipmentResult
 }
 
 sealed interface FindEquipmentsByFacilityIdResult {
