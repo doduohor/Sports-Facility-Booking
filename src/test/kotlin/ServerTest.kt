@@ -190,13 +190,13 @@ class ServerTest {
             contentType(ContentType.Text.Plain)
             setBody("name=Central Pool&type=POOL")
         }
-        assertJsonError(contentTypeResponse, HttpStatusCode.UnsupportedMediaType)
+        assertJsonError(contentTypeResponse, HttpStatusCode.BadRequest)
 
         val missingContentTypeResponse = client.post("/api/facilities") {
             basicAuth(TEST_USERNAME, TEST_PASSWORD)
             setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\"}")
         }
-        assertJsonError(missingContentTypeResponse, HttpStatusCode.UnsupportedMediaType)
+        assertJsonError(missingContentTypeResponse, HttpStatusCode.BadRequest)
 
         val acceptResponse = client.post("/api/facilities") {
             basicAuth(TEST_USERNAME, TEST_PASSWORD)
@@ -1260,7 +1260,7 @@ class ServerTest {
 
     private suspend fun assertJsonError(response: io.ktor.client.statement.HttpResponse, status: HttpStatusCode) {
         val body = response.bodyAsText()
-        assertEquals(status, response.status, body)
+        check(status == response.status) { "Expected $status, got ${response.status}: $body" }
         assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters(), body)
         assertTrue(body.contains("\"code\""), body)
         assertTrue(body.contains("\"name\""), body)

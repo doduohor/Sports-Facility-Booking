@@ -28,12 +28,12 @@ fun Application.configureStatusPages() {
             call.respondApiError(HttpStatusCode.BadRequest, "invalidRequest", "The request body is invalid")
         }
 
-        exception<ContentTransformationException> { call, _ ->
-            call.respondApiError(HttpStatusCode.BadRequest, "invalidRequest", "The request body is invalid")
-        }
-
         exception<UnsupportedMediaTypeException> { call, _ ->
             call.respondApiError(HttpStatusCode.UnsupportedMediaType, "unsupportedContentType", "The Content-Type header is not supported")
+        }
+
+        exception<ContentTransformationException> { call, _ ->
+            call.respondApiError(HttpStatusCode.BadRequest, "invalidRequest", "The request body is invalid")
         }
 
         exception<DateTimeParseException> { call, _ ->
