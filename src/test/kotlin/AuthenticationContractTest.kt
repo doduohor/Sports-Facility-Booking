@@ -15,7 +15,6 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
 
 class AuthenticationContractTest {
     private companion object {
@@ -47,7 +46,7 @@ class AuthenticationContractTest {
         configureTestApplication()
 
         protectedRoutes.forEach { route ->
-            assertEquals(HttpStatusCode.BadRequest, request(route, USERNAME, PASSWORD))
+            assertEquals(route.expectedStatus, request(route, USERNAME, PASSWORD))
         }
     }
 
@@ -55,8 +54,8 @@ class AuthenticationContractTest {
     fun `public routes are available without credentials`() = testApplication {
         configureTestApplication()
 
-        publicGetRoutes.forEach { path ->
-            assertNotEquals(HttpStatusCode.Unauthorized, client.get(path).status)
+        publicGetRoutes.forEach { route ->
+            assertEquals(route.expectedStatus, client.get(route.path).status)
         }
     }
 
@@ -109,12 +108,23 @@ class AuthenticationContractTest {
     private data class ProtectedRoute(
         val method: HttpMethod,
         val path: String,
-        val body: String
+        val body: String,
+        val expectedStatus: HttpStatusCode = HttpStatusCode.BadRequest
+    )
+
+    private data class PublicGetRoute(
+        val path: String,
+        val expectedStatus: HttpStatusCode
     )
 
     private val protectedRoutes = listOf(
         ProtectedRoute(HttpMethod.Post, "/api/facilities", """{"name":"","type":"POOL"}"""),
-        ProtectedRoute(HttpMethod.Put, "/api/facilities/not-a-number/activate", ""),
+        ProtectedRoute(
+            HttpMethod.Put,
+            "/api/facilities/999999/activate",
+            "",
+            HttpStatusCode.NotFound
+        ),
         ProtectedRoute(HttpMethod.Post, "/api/bookings", """{"facilityId":0,"customerId":900,"bookingDate":"2026-07-28","startTime":"10:00","endTime":"12:00"}"""),
         ProtectedRoute(HttpMethod.Post, "/api/equipments", """{"facilityId":0,"name":"Equipment","type":"VENTILATION"}"""),
         ProtectedRoute(HttpMethod.Post, "/api/measurements", """{"equipmentId":0,"type":"TEMPERATURE","unit":"CELSIUS","value":20.0}"""),
@@ -122,24 +132,24 @@ class AuthenticationContractTest {
     )
 
     private val publicGetRoutes = listOf(
-        "/",
-        "/json/kotlinx-serialization",
-        "/health",
-        "/api/facilities",
-        "/api/facilities/1/readings",
-        "/api/facilities/1",
-        "/api/bookings",
-        "/api/bookings/1",
-        "/api/facilities/1/bookings",
-        "/api/equipments",
-        "/api/equipments/1",
-        "/api/facilities/1/equipments",
-        "/api/measurements",
-        "/api/measurements/1",
-        "/api/equipments/1/measurements",
-        "/api/incidents",
-        "/api/incidents/1",
-        "/api/facilities/1/incidents",
-        "/api/equipments/1/incidents"
+        PublicGetRoute("/", HttpStatusCode.OK),
+        PublicGetRoute("/json/kotlinx-serialization", HttpStatusCode.OK),
+        PublicGetRoute("/health", HttpStatusCode.OK),
+        PublicGetRoute("/api/facilities", HttpStatusCode.OK),
+        PublicGetRoute("/api/facilities/1/readings", HttpStatusCode.OK),
+        PublicGetRoute("/api/facilities/1", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/bookings", HttpStatusCode.OK),
+        PublicGetRoute("/api/bookings/1", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/facilities/1/bookings", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/equipments", HttpStatusCode.OK),
+        PublicGetRoute("/api/equipments/1", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/facilities/1/equipments", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/measurements", HttpStatusCode.OK),
+        PublicGetRoute("/api/measurements/1", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/equipments/1/measurements", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/incidents", HttpStatusCode.OK),
+        PublicGetRoute("/api/incidents/1", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/facilities/1/incidents", HttpStatusCode.NotFound),
+        PublicGetRoute("/api/equipments/1/incidents", HttpStatusCode.NotFound)
     )
 }
