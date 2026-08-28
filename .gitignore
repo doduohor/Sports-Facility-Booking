@@ -49,3 +49,4 @@ docs/*
 docs/architecture/
 .superpowers/*
 AGENTS.md
+analize_docker/*

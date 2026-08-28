@@ -81,23 +81,31 @@ class RabbitMqConsumer(private val messageHandler: MessageHandler) : WorkerConsu
 
     private suspend fun process(connection: RabbitMqConnection, delivery: com.rabbitmq.client.Delivery) {
         val body = String(delivery.body, Charsets.UTF_8)
-        try {
+        val result = try {
             logger.info("Received message: {}", body)
-            when (messageHandler.handle(body)) {
-                MessageHandlerResult.Failure -> {
-                    logger.error("Failed to process message: {}", body)
-                    connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
-                }
-                MessageHandlerResult.Success -> {
-                    connection.channel.basicAck(delivery.envelope.deliveryTag, false)
-                    logger.info("Your message has been processed successfully: {}", body)
-                }
-            }
+            messageHandler.handle(body)
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
             logger.error("Failed to process message: {}", body, exception)
-            connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
+            MessageHandlerResult.Failure
+        }
+
+        if (result == MessageHandlerResult.Failure) {
+            logger.error("Failed to process message: {}", body)
+            try {
+                connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
+            } catch (exception: Exception) {
+                logger.error("Failed to reject message: {}", body, exception)
+            }
+            return
+        }
+
+        try {
+            connection.channel.basicAck(delivery.envelope.deliveryTag, false)
+            logger.info("Your message has been processed successfully: {}", body)
+        } catch (exception: Exception) {
+            logger.error("Failed to acknowledge message: {}", body, exception)
         }
     }
 }

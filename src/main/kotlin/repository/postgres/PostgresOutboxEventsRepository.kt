@@ -23,27 +23,37 @@ import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.update
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
+import java.sql.SQLException
 import kotlin.uuid.Uuid
 
 class PostgresOutboxEventsRepository(
     private val database: Database,
     private val clock: Clock
 ): OutboxEventsRepository {
-    override fun saveEvent(event: NewOutboxEvents): SaveEventResult = transaction(database){
-        OutboxEventsTable.insert{
-            it[OutboxEventsTable.eventId] = event.eventId
-            it[OutboxEventsTable.eventType] = event.eventType.name
-            it[OutboxEventsTable.payload] = event.payload
-            it[OutboxEventsTable.status] = event.status.name
-            it[OutboxEventsTable.createdAt] = event.createdAt
-            it[OutboxEventsTable.publishedAt] = event.publishedAt
-            it[OutboxEventsTable.attempt] = event.attempt
-            it[errorMessage] = event.errorMessage
+    override fun saveEvent(event: NewOutboxEvents): SaveEventResult = try {
+        transaction(database) {
+            OutboxEventsTable.insert {
+                it[OutboxEventsTable.eventId] = event.eventId
+                it[OutboxEventsTable.eventType] = event.eventType.name
+                it[OutboxEventsTable.payload] = event.payload
+                it[OutboxEventsTable.status] = event.status.name
+                it[OutboxEventsTable.createdAt] = event.createdAt
+                it[OutboxEventsTable.publishedAt] = event.publishedAt
+                it[OutboxEventsTable.attempt] = event.attempt
+                it[errorMessage] = event.errorMessage
+            }
+            SaveEventResult.Success
         }
-        SaveEventResult.Success
+    } catch (exception: ExposedSQLException) {
+        if ((exception.cause as? SQLException)?.sqlState == UNIQUE_VIOLATION_SQL_STATE) {
+            SaveEventResult.Error
+        } else {
+            throw exception
+        }
     }
 
     fun saveEvent(event: OutboxEvents): SaveEventResult = saveEvent(
@@ -66,6 +76,7 @@ class PostgresOutboxEventsRepository(
                     ((OutboxEventsTable.status eq OutboxEventStatus.FAILED.name) and
                         (OutboxEventsTable.attempt less EventProcessingPolicy.MAX_ATTEMPTS))
             }
+            .orderBy(OutboxEventsTable.id)
             .map{it -> toOutboxEvents(it)}
     }
 
@@ -198,5 +209,9 @@ class PostgresOutboxEventsRepository(
             attempt = row[OutboxEventsTable.attempt],
             errorMessage = row[OutboxEventsTable.errorMessage]
         )
+
+    private companion object {
+        const val UNIQUE_VIOLATION_SQL_STATE = "23505"
+    }
 
 }

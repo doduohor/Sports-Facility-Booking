@@ -18,10 +18,15 @@ class DatabaseFactory {
         }
 
         val newDataSource = HikariDataSource(hikariConfig)
-        dataSource = newDataSource
-        Flyway.configure().dataSource(newDataSource).locations("classpath:db/migration").load().migrate()
-
-        return Database.connect(newDataSource)
+        return try {
+            dataSource = newDataSource
+            Flyway.configure().dataSource(newDataSource).locations("classpath:db/migration").load().migrate()
+            Database.connect(newDataSource)
+        } catch (exception: Throwable) {
+            newDataSource.close()
+            if (dataSource === newDataSource) dataSource = null
+            throw exception
+        }
     }
 
     fun close() {

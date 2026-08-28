@@ -12,17 +12,21 @@ object MongoFactory {
                     "@${config.host}:${config.port}/?authSource=admin"
 
         val client = MongoClient.create(connectionString)
-        val database = client.getDatabase(config.database)
+        return try {
+            val database = client.getDatabase(config.database)
+            runBlocking {
+                database.runCommand<BsonDocument>(
+                    BsonDocument("ping", BsonInt32(1))
+                )
+            }
 
-        runBlocking {
-            database.runCommand<BsonDocument>(
-                BsonDocument("ping", BsonInt32(1))
+            MongoConnection(
+                client = client,
+                database = database
             )
+        } catch (exception: Throwable) {
+            client.close()
+            throw exception
         }
-
-        return MongoConnection(
-            client = client,
-            database = database
-        )
     }
 }
