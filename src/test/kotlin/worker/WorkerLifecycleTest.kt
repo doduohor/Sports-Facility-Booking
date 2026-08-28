@@ -109,6 +109,17 @@ class WorkerLifecycleTest {
     }
 
     @Test
+    fun `start after stop is rejected`() = runBlocking {
+        val lifecycle = WorkerLifecycle(FakeWorkerConnector(FakeWorkerRuntime()), FakeShutdownHooks())
+
+        lifecycle.stop()
+
+        assertFailsWith<IllegalStateException> {
+            lifecycle.start(CoroutineScope(Dispatchers.Default))
+        }
+    }
+
+    @Test
     fun `close failure is suppressed behind the primary failure`() = runBlocking {
         val startupFailure = IllegalStateException("startup failed")
         val closeFailure = IllegalArgumentException("close failed")

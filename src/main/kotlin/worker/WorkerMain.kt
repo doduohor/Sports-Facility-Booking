@@ -20,6 +20,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import org.slf4j.LoggerFactory
 
 fun interface WorkerConnector {
@@ -56,6 +58,7 @@ class WorkerLifecycle(
 
     fun start(scope: CoroutineScope): Deferred<Unit> = synchronized(lock) {
         check(maxConnectionAttempts > 0) { "maxConnectionAttempts must be positive" }
+        check(!stopRequested) { "WorkerLifecycle is already stopped" }
         job ?: scope.async {
             runLifecycle(this)
         }.also { job = it }
@@ -151,6 +154,7 @@ class RabbitWorkerRuntime(
 ) : WorkerRuntime {
     override suspend fun start(scope: CoroutineScope) {
         consumer.startConsuming(connection, rabbitConfig)
+        currentCoroutineContext().ensureActive()
         outboxPublisher.start(scope)
     }
 

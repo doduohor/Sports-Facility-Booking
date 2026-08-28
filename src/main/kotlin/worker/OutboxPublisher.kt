@@ -1,6 +1,7 @@
 package com.doduohor.worker
 
 import com.doduohor.events.MakeAsPublishedResult
+import com.doduohor.events.OutboxEvents
 import com.doduohor.events.OutboxEventsRepository
 import com.doduohor.events.SaveErrorResult
 import com.doduohor.events.StartPublishingResult
@@ -19,6 +20,9 @@ import org.slf4j.LoggerFactory
 class OutboxPublisher(
     private val outboxEventsRepository: OutboxEventsRepository,
     private val messagePublisher: MessagePublisher,
+    private val findEvents: suspend () -> List<OutboxEvents> = {
+        outboxEventsRepository.findUnprocessedEvents()
+    },
     private val pollIntervalMillis: Long = 2_000,
     private val wait: suspend (Long) -> Unit = { delay(it) }
 ) {
@@ -54,7 +58,7 @@ class OutboxPublisher(
     }
 
     suspend fun publishMessage() {
-        val newEvents = outboxEventsRepository.findUnprocessedEvents()
+        val newEvents = findEvents()
 
         for (event in newEvents) {
             when (outboxEventsRepository.tryStartPublishing(event.eventId)) {

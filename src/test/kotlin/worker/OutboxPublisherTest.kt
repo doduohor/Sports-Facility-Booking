@@ -114,6 +114,27 @@ class OutboxPublisherTest {
     }
 
     @Test
+    fun `close cancels polling in progress`() = runBlocking {
+        val pollingStarted = CompletableDeferred<Unit>()
+        val messagePublisher = FakeMessagePublisher()
+        val publisher = OutboxPublisher(
+            FakeOutboxRepository(event()),
+            messagePublisher,
+            findEvents = {
+                pollingStarted.complete(Unit)
+                kotlinx.coroutines.awaitCancellation()
+            },
+            pollIntervalMillis = 0
+        )
+
+        publisher.start(CoroutineScope(Dispatchers.Default))
+        pollingStarted.await()
+        publisher.close()
+
+        assertTrue(messagePublisher.messages.isEmpty())
+    }
+
+    @Test
     fun `starting twice does not create another polling coroutine`() = runBlocking {
         val repository = FakeOutboxRepository(event())
         val publisher = OutboxPublisher(repository, FakeMessagePublisher(), pollIntervalMillis = 10)
