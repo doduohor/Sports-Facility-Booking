@@ -7,3 +7,17 @@ COPY gradle ./gradle
 COPY src ./src
 
 RUN ./gradlew --no-daemon buildFatJar
+
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=build /workspace/build/libs/sportsfacilitybooking-1.0.0-SNAPSHOT.jar /app/app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

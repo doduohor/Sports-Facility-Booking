@@ -14,6 +14,26 @@ import kotlin.test.assertTrue
 
 class WorkerLifecycleTest {
     @Test
+    fun `worker resource connection retries independently and returns the first successful resource`() = runBlocking {
+        var attempts = 0
+        var delays = 0
+        val expected = "connected"
+
+        val actual = connectWithRetry(
+            maxAttempts = 3,
+            retryDelay = { delays += 1 }
+        ) {
+            attempts += 1
+            if (attempts < 3) error("database unavailable")
+            expected
+        }
+
+        assertEquals(expected, actual)
+        assertEquals(3, attempts)
+        assertEquals(2, delays)
+    }
+
+    @Test
     fun `successful start starts consumer polls and registers one shutdown hook`() = runBlocking {
         val consumerStarted = CompletableDeferred<Unit>()
         val pollingStarted = CompletableDeferred<Unit>()
@@ -230,6 +250,65 @@ class WorkerLifecycleTest {
         assertEquals(primary::class, failure::class)
         assertEquals(primary.message, failure.message)
         assertEquals(1, connection.closeCalls)
+        scope.cancel()
+    }
+
+    @Test
+    fun `resource factory runs before consumer and its resources are closed`() = runBlocking {
+        val resource = FakeResource()
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val scope = testScope()
+        val lifecycle = WorkerLifecycle(
+            scope = scope,
+            connectionFactory = { events += "connection"; FakeConnection() },
+            resourceFactory = { events += "resources"; listOf(resource) },
+            startConsumer = { events += "consumer" },
+            poll = { CompletableDeferred<Unit>().await() },
+            retryDelay = {},
+            pollDelay = {},
+            shutdownHooks = FakeShutdownHooks()
+        )
+
+        val run = lifecycle.start()
+        while (true) {
+            val complete = synchronized(events) {
+                events == listOf("resources", "connection", "consumer")
+            }
+            if (complete) break
+            kotlinx.coroutines.yield()
+        }
+
+        lifecycle.stop()
+        assertFailsWith<CancellationException> { run.await() }
+        assertEquals(1, resource.closeCalls)
+        scope.cancel()
+    }
+
+    @Test
+    fun `poll callback can publish outbox in the same lifecycle loop`() = runBlocking {
+        val pollingStarted = CompletableDeferred<Unit>()
+        val scope = testScope()
+        var polls = 0
+        val lifecycle = WorkerLifecycle(
+            scope = scope,
+            connectionFactory = { FakeConnection() },
+            startConsumer = {},
+            poll = {
+                polls += 1
+                pollingStarted.complete(Unit)
+                CompletableDeferred<Unit>().await()
+            },
+            retryDelay = {},
+            pollDelay = {},
+            shutdownHooks = FakeShutdownHooks()
+        )
+
+        val run = lifecycle.start()
+        pollingStarted.await()
+
+        assertEquals(1, polls)
+        lifecycle.stop()
+        assertFailsWith<CancellationException> { run.await() }
         scope.cancel()
     }
 

@@ -2,14 +2,19 @@ package com.doduohor.worker
 
 import com.doduohor.infrastructure.database.mongo.MongoConfig
 import com.doduohor.infrastructure.database.mongo.MongoFactory
+import com.doduohor.infrastructure.database.mongo.MongoConnection
+import com.doduohor.infrastructure.database.postgres.DatabaseConfig
+import com.doduohor.infrastructure.database.postgres.DatabaseFactory
 import com.doduohor.infrastructure.messaging.RabbitMqConfig
 import com.doduohor.infrastructure.messaging.RabbitMqConnection
 import com.doduohor.infrastructure.messaging.RabbitMqConsumer
 import com.doduohor.infrastructure.messaging.RabbitMqFactory
+import com.doduohor.infrastructure.messaging.RabbitMqPublisher
 import com.doduohor.infrastructure.notification.TelegramConfig
 import com.doduohor.infrastructure.notification.TelegramNotificationSender
 import com.doduohor.infrastructure.time.SystemClock
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
+import com.doduohor.repository.postgres.PostgresOutboxEventsRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +47,27 @@ private object RuntimeShutdownHooks : ShutdownHookRegistry {
     }
 }
 
+internal suspend fun <T> connectWithRetry(
+    maxAttempts: Int = 5,
+    retryDelay: suspend () -> Unit = { kotlinx.coroutines.delay(2.seconds) },
+    connect: () -> T
+): T {
+    require(maxAttempts > 0) { "maxAttempts must be positive" }
+    var lastFailure: Throwable? = null
+    repeat(maxAttempts) { attempt ->
+        currentCoroutineContext().ensureActive()
+        try {
+            return connect()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (exception: Throwable) {
+            lastFailure = exception
+            if (attempt + 1 < maxAttempts) retryDelay()
+        }
+    }
+    throw requireNotNull(lastFailure)
+}
+
 private class RabbitWorkerConnection(
     internal val delegate: RabbitMqConnection
 ) : WorkerConnection {
@@ -63,6 +89,7 @@ class WorkerLifecycle(
     private val retryDelay: suspend () -> Unit = { kotlinx.coroutines.delay(2.seconds) },
     private val pollDelay: suspend () -> Unit = { kotlinx.coroutines.delay(2.seconds) },
     private val resources: List<WorkerResource> = emptyList(),
+    private val resourceFactory: suspend () -> List<WorkerResource> = { resources },
     private val shutdownHooks: ShutdownHookRegistry = RuntimeShutdownHooks
 ) : AutoCloseable {
     private val lock = Any()
@@ -72,6 +99,7 @@ class WorkerLifecycle(
     private var run: Deferred<Unit>? = null
     private var workerJob: Job? = null
     private var connection: WorkerConnection? = null
+    private var activeResources: List<WorkerResource> = emptyList()
     private var hookRegistered = false
 
     fun start(): Deferred<Unit> = synchronized(lock) {
@@ -107,6 +135,17 @@ class WorkerLifecycle(
     private suspend fun execute(): Throwable? {
         var failure: Throwable? = null
         try {
+            val connectedResources = resourceFactory()
+            val resourcesNeedImmediateClose = synchronized(lock) {
+                if (resourcesClosed.get()) true
+                else {
+                    activeResources = connectedResources
+                    false
+                }
+            }
+            if (resourcesNeedImmediateClose) {
+                connectedResources.forEach(WorkerResource::close)
+            }
             val connected = connectWithRetry()
             synchronized(lock) { connection = connected }
             currentCoroutineContext().ensureActive()
@@ -176,7 +215,8 @@ class WorkerLifecycle(
             }
         }
         if (resourcesClosed.compareAndSet(false, true)) {
-            resources.forEach { resource ->
+            val resourcesToClose = synchronized(lock) { activeResources }.ifEmpty { resources }
+            resourcesToClose.forEach { resource ->
                 try {
                     resource.close()
                 } catch (exception: Throwable) {
@@ -193,28 +233,59 @@ class WorkerLifecycle(
 
 fun main() = runBlocking {
     val logger = LoggerFactory.getLogger("WorkerMain")
+    val databaseFactory = DatabaseFactory()
+    val databaseConfig = DatabaseConfig.fromEnv()
     val rabbitConfig = RabbitMqConfig.fromEnv()
     val telegramConfig = TelegramConfig.fromEnv()
-    val mongoConnection = MongoFactory.connect(MongoConfig.fromEnv())
-    val historyRepository = MongoEventHistoryRepository(mongoConnection.database, SystemClock)
-    historyRepository.createIndexes()
-    val messageHandler = MessageHandler(
-        notificationSender = TelegramNotificationSender(telegramConfig),
-        eventHistoryRepository = historyRepository,
-        clock = SystemClock
-    )
-    val consumer = RabbitMqConsumer(messageHandler)
+    val mongoConfig = MongoConfig.fromEnv()
+    var mongoConnection: MongoConnection? = null
+    lateinit var historyRepository: MongoEventHistoryRepository
+    lateinit var outboxRepository: PostgresOutboxEventsRepository
+    lateinit var outboxPublisher: OutboxPublisher
     val lifecycle = WorkerLifecycle(
         scope = this,
         connectionFactory = { RabbitWorkerConnection(RabbitMqFactory.connect(rabbitConfig)) },
         startConsumer = { connection ->
-            consumer.startConsuming(
-                (connection as RabbitWorkerConnection).delegate,
+            val rabbitConnection = (connection as RabbitWorkerConnection).delegate
+            outboxPublisher = OutboxPublisher(
+                outboxEventsRepository = outboxRepository,
+                messagePublisher = RabbitMqPublisher(
+                    rabbitMqConnection = rabbitConnection,
+                    exchange = rabbitConfig.exchange,
+                    routingKey = rabbitConfig.routingKey
+                )
+            )
+            val messageHandler = MessageHandler(
+                notificationSender = TelegramNotificationSender(telegramConfig),
+                eventHistoryRepository = historyRepository,
+                clock = SystemClock
+            )
+            RabbitMqConsumer(messageHandler).startConsuming(
+                rabbitConnection,
                 rabbitConfig
             )
         },
-        poll = {},
-        resources = listOf(MongoWorkerResource { mongoConnection.client.close() })
+        poll = { outboxPublisher.publishMessage() },
+        resourceFactory = {
+            try {
+                val database = connectWithRetry { databaseFactory.connect(databaseConfig) }
+                val connectedMongo = connectWithRetry { MongoFactory.connect(mongoConfig) }
+                mongoConnection = connectedMongo
+                historyRepository = MongoEventHistoryRepository(connectedMongo.database, SystemClock)
+                historyRepository.createIndexes()
+                outboxRepository = PostgresOutboxEventsRepository(database, SystemClock)
+                listOf(
+                    MongoWorkerResource { connectedMongo.client.close() },
+                    object : WorkerResource {
+                        override fun close() = databaseFactory.close()
+                    }
+                )
+            } catch (exception: Throwable) {
+                mongoConnection?.client?.close()
+                databaseFactory.close()
+                throw exception
+            }
+        }
     )
 
     try {

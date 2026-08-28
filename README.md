@@ -37,11 +37,15 @@ If the server starts successfully, you'll see the following output:
 
 ## Docker
 
-Run the API with Postgres:
+Build and run the API, worker, PostgreSQL, RabbitMQ and MongoDB from a clean checkout:
 
 ```bash
-docker compose up --build
+docker compose --env-file .env.example up --build
 ```
+
+The checked-in `.env.example` contains local-only placeholder credentials. Copy it to
+`.env` if you need to override values; real credentials and Telegram tokens must stay
+outside the repository.
 
 Check the API:
 
@@ -49,13 +53,22 @@ Check the API:
 curl http://localhost:8080/health
 ```
 
+Run the isolated Docker smoke test (it removes only its own containers and volumes):
+
+```bash
+bash scripts/docker-smoke.sh
+```
+
+The smoke test builds the single multi-stage `Dockerfile`, waits for the API healthcheck,
+checks `/health`, prints service logs on failure, and cleans up the smoke project.
+
 The API container receives database settings through environment variables:
 
 | Variable | Default in compose |
 |----------|--------------------|
 | `DATABASE_URL` | `jdbc:postgresql://postgres:5432/sports_facility_booking` |
 | `DATABASE_USER` | `sports` |
-| `DATABASE_PASSWORD` | `sports` |
+| `DATABASE_PASSWORD` | `change_me` |
 
 ## Technical Debt
 

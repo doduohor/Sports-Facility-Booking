@@ -8,6 +8,13 @@ data class DatabaseConfig(
     val password: String
 ) {
     companion object {
+        fun fromEnv(): DatabaseConfig =
+            DatabaseConfig(
+                url = requireNotNull(System.getenv("DATABASE_URL")),
+                user = requireNotNull(System.getenv("DATABASE_USER")),
+                password = requireNotNull(System.getenv("DATABASE_PASSWORD"))
+            )
+
         fun from(config: ApplicationConfig): DatabaseConfig =
             DatabaseConfig(
                 url = config.property("database.url").getString(),
