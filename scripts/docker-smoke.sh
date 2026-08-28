@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 PROJECT="sports-booking-smoke"
 COMPOSE=(docker compose --env-file .env.example -p "$PROJECT")
+API_PORT="${API_PORT:-$(sed -n 's/^API_PORT=//p' .env.example | head -n 1)}"
+API_PORT="${API_PORT:-8080}"
 
 cleanup() {
     status=$?
@@ -24,7 +26,7 @@ while (( SECONDS < deadline )); do
         && printf '%s\n' "$services" | grep -q '^mongo running healthy$' \
         && printf '%s\n' "$services" | grep -q '^api running healthy$' \
         && printf '%s\n' "$services" | grep -q '^worker running '; then
-        curl --fail "http://localhost:${API_PORT:-8080}/health"
+        curl --fail "http://localhost:${API_PORT}/health"
         exit 0
     fi
     sleep 2

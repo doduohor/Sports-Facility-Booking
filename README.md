@@ -62,6 +62,16 @@ bash scripts/docker-smoke.sh
 The smoke test builds the single multi-stage `Dockerfile`, waits for the API healthcheck,
 checks `/health`, prints service logs on failure, and cleans up the smoke project.
 
+Run the full event-flow check on a separate Compose project:
+
+```bash
+bash scripts/docker-e2e.sh
+```
+
+The e2e test creates a measurement with Basic Auth and verifies its PostgreSQL outbox
+record, RabbitMQ queue, and processed MongoDB history. It uses only local placeholder
+credentials and removes its own containers and volumes after the run.
+
 The API container receives database settings through environment variables:
 
 | Variable | Default in compose |

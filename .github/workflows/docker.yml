@@ -13,3 +13,6 @@ jobs:
 
       - name: Run Docker smoke test
         run: bash scripts/docker-smoke.sh
+
+      - name: Repeat Docker smoke test
+        run: bash scripts/docker-smoke.sh
