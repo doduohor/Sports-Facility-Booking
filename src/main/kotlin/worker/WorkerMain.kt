@@ -22,10 +22,26 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
+import java.util.concurrent.atomic.AtomicBoolean
 import org.slf4j.LoggerFactory
 
 fun interface WorkerConnector {
     suspend fun connect(): WorkerRuntime
+}
+
+interface WorkerConnection {
+    fun close()
+}
+
+interface WorkerConsumer {
+    fun configure(connection: WorkerConnection, config: RabbitMqConfig)
+    fun start(scope: CoroutineScope)
+    suspend fun stop()
+}
+
+interface WorkerOutboxPublisher {
+    fun start(scope: CoroutineScope): kotlinx.coroutines.Job
+    suspend fun close()
 }
 
 interface WorkerRuntime {
@@ -147,18 +163,22 @@ class WorkerLifecycle(
 }
 
 class RabbitWorkerRuntime(
-    private val connection: RabbitMqConnection,
-    private val consumer: RabbitMqConsumer,
+    private val connection: WorkerConnection,
+    private val consumer: WorkerConsumer,
     private val rabbitConfig: RabbitMqConfig,
-    private val outboxPublisher: OutboxPublisher
+    private val outboxPublisher: WorkerOutboxPublisher
 ) : WorkerRuntime {
+    private val stopped = AtomicBoolean(false)
+
     override suspend fun start(scope: CoroutineScope) {
-        consumer.startConsuming(connection, rabbitConfig)
+        consumer.configure(connection, rabbitConfig)
+        consumer.start(scope)
         currentCoroutineContext().ensureActive()
         outboxPublisher.start(scope)
     }
 
     override suspend fun stop() {
+        if (!stopped.compareAndSet(false, true)) return
         var failure: Throwable? = null
         try {
             outboxPublisher.close()
@@ -166,7 +186,7 @@ class RabbitWorkerRuntime(
             failure = exception
         }
         try {
-            consumer.stopConsuming()
+            consumer.stop()
         } catch (exception: Throwable) {
             failure?.addSuppressed(exception) ?: run { failure = exception }
         }

@@ -15,11 +15,17 @@ data class DatabaseConfig(
                 password = config.property("database.password").getString()
             )
 
-        fun fromEnv(): DatabaseConfig =
+        fun fromEnv(): DatabaseConfig = fromEnv(System::getenv)
+
+        internal fun fromEnv(readEnv: (String) -> String?): DatabaseConfig =
             DatabaseConfig(
-                url = System.getenv("DATABASE_URL"),
-                user = System.getenv("DATABASE_USER"),
-                password = System.getenv("DATABASE_PASSWORD")
+                url = requiredEnv("DATABASE_URL", readEnv),
+                user = requiredEnv("DATABASE_USER", readEnv),
+                password = requiredEnv("DATABASE_PASSWORD", readEnv)
             )
+
+        private fun requiredEnv(name: String, readEnv: (String) -> String?): String =
+            readEnv(name)?.takeIf { it.isNotBlank() }
+                ?: error("Required environment variable is missing or blank: $name")
     }
 }

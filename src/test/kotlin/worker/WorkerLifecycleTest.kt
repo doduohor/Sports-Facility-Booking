@@ -1,6 +1,7 @@
 package com.doduohor.worker
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,8 +15,60 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import com.doduohor.infrastructure.messaging.RabbitMqConfig
 
 class WorkerLifecycleTest {
+    @Test
+    fun `rabbit runtime stops outbox consumer and connection in order and is idempotent`() = runBlocking {
+        val events = mutableListOf<String>()
+        val runtime = RabbitWorkerRuntime(
+            connection = FakeConnection(events),
+            consumer = FakeConsumer(events),
+            rabbitConfig = testRabbitConfig(),
+            outboxPublisher = FakeOutbox(events)
+        )
+
+        runtime.start(CoroutineScope(Dispatchers.Default))
+        runtime.stop()
+        runtime.stop()
+
+        assertEquals(listOf("consumer.start", "outbox.start", "outbox.close", "consumer.stop", "connection.close"), events)
+    }
+
+    @Test
+    fun `rabbit runtime does not start outbox after cancellation between resources`() = runBlocking {
+        val events = mutableListOf<String>()
+        val runtime = RabbitWorkerRuntime(
+            connection = FakeConnection(events),
+            consumer = FakeConsumer(events, cancelAfterStart = true),
+            rabbitConfig = testRabbitConfig(),
+            outboxPublisher = FakeOutbox(events)
+        )
+
+        assertFailsWith<CancellationException> {
+            runtime.start(CoroutineScope(Dispatchers.Default))
+        }
+
+        assertEquals(listOf("consumer.start"), events)
+    }
+
+    @Test
+    fun `rabbit runtime closes every resource and preserves first close failure`() = runBlocking {
+        val events = mutableListOf<String>()
+        val outboxFailure = IllegalStateException("outbox close")
+        val runtime = RabbitWorkerRuntime(
+            connection = FakeConnection(events, IllegalArgumentException("connection close")),
+            consumer = FakeConsumer(events, stopFailure = IllegalStateException("consumer close")),
+            rabbitConfig = testRabbitConfig(),
+            outboxPublisher = FakeOutbox(events, outboxFailure)
+        )
+
+        val thrown = assertFailsWith<IllegalStateException> { runtime.stop() }
+
+        assertEquals(outboxFailure, thrown)
+        assertEquals(listOf("outbox.close", "consumer.stop", "connection.close"), events)
+        assertEquals(2, thrown.suppressed.size)
+    }
     @Test
     fun `successful start registers one shutdown hook and stops runtime once`() = runBlocking {
         val runtime = FakeWorkerRuntime()
@@ -195,4 +248,30 @@ class WorkerLifecycleTest {
             stopFailure?.let { throw it }
         }
     }
+
+    private class FakeConnection(private val events: MutableList<String>, private val failure: Exception? = null) : WorkerConnection {
+        override fun close() { events += "connection.close"; failure?.let { throw it } }
+    }
+
+    private class FakeConsumer(
+        private val events: MutableList<String>,
+        private val cancelAfterStart: Boolean = false,
+        private val stopFailure: Exception? = null
+    ) : WorkerConsumer {
+        override fun configure(connection: WorkerConnection, config: RabbitMqConfig) { }
+
+        override fun start(scope: CoroutineScope) {
+            events += "consumer.start"
+            if (cancelAfterStart) throw CancellationException("cancelled")
+        }
+
+        override suspend fun stop() { events += "consumer.stop"; stopFailure?.let { throw it } }
+    }
+
+    private class FakeOutbox(private val events: MutableList<String>, private val closeFailure: Exception? = null) : WorkerOutboxPublisher {
+        override fun start(scope: CoroutineScope): kotlinx.coroutines.Job { events += "outbox.start"; return kotlinx.coroutines.Job() }
+        override suspend fun close() { events += "outbox.close"; closeFailure?.let { throw it } }
+    }
+
+    private fun testRabbitConfig() = RabbitMqConfig("host", 1, "user", "password", "exchange", "queue", "key", "dlx", "dlq", "dlkey")
 }

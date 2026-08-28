@@ -17,6 +17,13 @@ import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
+/**
+ * Publishes claimed Outbox events. A cancellation after the claim deliberately
+ * leaves PROCESSING unchanged: the schema has no lease timestamp, so reclaiming
+ * it automatically would risk concurrent duplicate publication. Recovery is
+ * bounded by the existing repository policy and requires an explicit recovery
+ * operation until a lease column is introduced.
+ */
 class OutboxPublisher(
     private val outboxEventsRepository: OutboxEventsRepository,
     private val messagePublisher: MessagePublisher,
@@ -25,13 +32,13 @@ class OutboxPublisher(
     },
     private val pollIntervalMillis: Long = 2_000,
     private val wait: suspend (Long) -> Unit = { delay(it) }
-) {
+) : WorkerOutboxPublisher {
     private val logger = LoggerFactory.getLogger("OutboxPublisher")
     private var job: Job? = null
     private var stopped = false
 
     @Synchronized
-    fun start(scope: CoroutineScope): Job {
+    override fun start(scope: CoroutineScope): Job {
         check(!stopped) { "OutboxPublisher is already stopped" }
         return job ?: scope.launch {
             while (isActive) {
@@ -48,7 +55,7 @@ class OutboxPublisher(
         }.also { job = it }
     }
 
-    suspend fun close() {
+    override suspend fun close() {
         val currentJob = synchronized(this) {
             stopped = true
             job

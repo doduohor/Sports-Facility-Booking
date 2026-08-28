@@ -28,18 +28,26 @@ data class RabbitMqConfig(
                 deadLetterQueue = config.property("rabbitmq.deadLetterQueue").getString(),
                 deadLetterRoutingKey = config.property("rabbitmq.deadLetterRoutingKey").getString()
             )
-        fun fromEnv(): RabbitMqConfig =
+        fun fromEnv(): RabbitMqConfig = fromEnv(System::getenv)
+
+        internal fun fromEnv(readEnv: (String) -> String?): RabbitMqConfig =
             RabbitMqConfig(
-                host = System.getenv("RABBIT_HOST"),
-                port = System.getenv("RABBIT_PORT").toInt(),
-                username = System.getenv("RABBIT_USER"),
-                password = System.getenv("RABBIT_PASSWORD"),
-                exchange = System.getenv("RABBIT_EXCHANGE"),
-                queue = System.getenv("RABBIT_QUEUE"),
-                routingKey = System.getenv("RABBIT_ROUTING_KEY"),
-                deadLetterExchange = System.getenv("RABBIT_EXCHANGE_DLQ"),
-                deadLetterQueue = System.getenv("RABBIT_QUEUE_DLQ"),
-                deadLetterRoutingKey = System.getenv("RABBIT_ROUTING_KEY_DLQ")
+                host = requiredEnv("RABBIT_HOST", readEnv),
+                port = requiredEnv("RABBIT_PORT", readEnv).toIntOrNull()
+                    ?.also { require(it in 1..65_535) { "RABBIT_PORT must be between 1 and 65535" } }
+                    ?: error("RABBIT_PORT must be an integer"),
+                username = requiredEnv("RABBIT_USER", readEnv),
+                password = requiredEnv("RABBIT_PASSWORD", readEnv),
+                exchange = requiredEnv("RABBIT_EXCHANGE", readEnv),
+                queue = requiredEnv("RABBIT_QUEUE", readEnv),
+                routingKey = requiredEnv("RABBIT_ROUTING_KEY", readEnv),
+                deadLetterExchange = requiredEnv("RABBIT_EXCHANGE_DLQ", readEnv),
+                deadLetterQueue = requiredEnv("RABBIT_QUEUE_DLQ", readEnv),
+                deadLetterRoutingKey = requiredEnv("RABBIT_ROUTING_KEY_DLQ", readEnv)
             )
+
+        private fun requiredEnv(name: String, readEnv: (String) -> String?): String =
+            readEnv(name)?.takeIf { it.isNotBlank() }
+                ?: error("Required environment variable is missing or blank: $name")
     }
 }

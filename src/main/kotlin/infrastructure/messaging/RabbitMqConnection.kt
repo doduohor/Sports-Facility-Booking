@@ -7,10 +7,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RabbitMqConnection(
     val connection: Connection,
     val channel: Channel
-){
+): com.doduohor.worker.WorkerConnection {
     private val closed = AtomicBoolean(false)
 
-    fun close() {
+    override fun close() {
         if (!closed.compareAndSet(false, true)) return
 
         var failure: Throwable? = null

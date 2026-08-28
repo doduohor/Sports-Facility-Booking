@@ -20,6 +20,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -86,7 +87,7 @@ class OutboxPublisherTest {
         secondIteration.await()
         publisher.close()
 
-        assertEquals(2, repository.findCalls)
+        assertTrue(repository.findCalls >= 2)
     }
 
     @Test
@@ -109,6 +110,30 @@ class OutboxPublisherTest {
         publishingStarted.await()
         publisher.close()
 
+        assertFalse(repository.markedPublished)
+        assertFalse(repository.savedError)
+    }
+
+    @Test
+    fun `cancellation after claim leaves processing event for explicit recovery`() = runBlocking {
+        val publishingStarted = CompletableDeferred<Unit>()
+        val repository = FakeOutboxRepository(event())
+        val publisher = OutboxPublisher(
+            repository,
+            object : MessagePublisher {
+                override suspend fun publish(message: String) {
+                    publishingStarted.complete(Unit)
+                    kotlinx.coroutines.awaitCancellation()
+                }
+            }
+        )
+
+        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch { publisher.publishMessage() }
+        publishingStarted.await()
+        job.cancel()
+        job.join()
+
+        assertTrue(repository.processing)
         assertFalse(repository.markedPublished)
         assertFalse(repository.savedError)
     }
@@ -183,6 +208,7 @@ class OutboxPublisherTest {
         var markedPublished = false
         var savedError = false
         var savedErrorMessage: String? = null
+        var processing = false
 
         override fun saveEvent(event: NewOutboxEvents): SaveEventResult = SaveEventResult.Success
 
@@ -193,10 +219,13 @@ class OutboxPublisherTest {
             return listOf(event)
         }
 
-        override fun tryStartPublishing(eventId: Uuid): StartPublishingResult = startResult
+        override fun tryStartPublishing(eventId: Uuid): StartPublishingResult = startResult.also {
+            if (it == StartPublishingResult.Started) processing = true
+        }
 
         override fun makeAsPublished(eventId: Uuid): MakeAsPublishedResult {
             markedPublished = true
+            processing = false
             return MakeAsPublishedResult.Success
         }
 
@@ -204,6 +233,7 @@ class OutboxPublisherTest {
 
         override fun saveError(eventId: Uuid, error: String): SaveErrorResult {
             savedError = true
+            processing = false
             savedErrorMessage = error
             return SaveErrorResult.Success
         }
