@@ -1,0 +1,187 @@
+package com.doduohor.worker
+
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class WorkerLifecycleTest {
+    @Test
+    fun `successful start registers one shutdown hook and stops runtime once`() = runBlocking {
+        val runtime = FakeWorkerRuntime()
+        val hooks = FakeShutdownHooks()
+        val lifecycle = WorkerLifecycle(
+            connector = FakeWorkerConnector(runtime),
+            shutdownHooks = hooks,
+            retryDelay = { }
+        )
+
+        lifecycle.start(CoroutineScope(Dispatchers.Default))
+        runtime.started.await()
+        withTimeout(2_000) {
+            while (hooks.callbacks.isEmpty()) yield()
+        }
+
+        assertEquals(1, hooks.callbacks.size)
+        lifecycle.stop()
+        lifecycle.close()
+
+        assertEquals(1, runtime.startCount)
+        assertEquals(1, runtime.stopCount)
+    }
+
+    @Test
+    fun `temporary connection failures are retried`() = runBlocking {
+        val runtime = FakeWorkerRuntime()
+        val connector = FakeWorkerConnector(runtime, failuresBeforeSuccess = 2)
+        val lifecycle = WorkerLifecycle(connector, FakeShutdownHooks(), retryDelay = { })
+
+        lifecycle.start(CoroutineScope(Dispatchers.Default))
+        runtime.started.await()
+        lifecycle.stop()
+        withTimeout(2_000) { lifecycle.close() }
+
+        assertEquals(3, connector.attempts)
+    }
+
+    @Test
+    fun `connection retry exhaustion keeps the startup failure`() = runBlocking {
+        val failure = IllegalStateException("Rabbit unavailable")
+        val lifecycle = WorkerLifecycle(
+            connector = FakeWorkerConnector(failure = failure),
+            shutdownHooks = FakeShutdownHooks(),
+            maxConnectionAttempts = 2,
+            retryDelay = { }
+        )
+
+        val job = lifecycle.start(CoroutineScope(Dispatchers.Default))
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            withTimeout(2_000) { job.await() }
+        }
+        assertEquals(failure::class, thrown::class)
+        assertEquals(failure.message, thrown.message)
+    }
+
+    @Test
+    fun `stop during connection prevents runtime start and hook registration`() = runBlocking {
+        val connectionStarted = CompletableDeferred<Unit>()
+        val releaseConnection = CompletableDeferred<Unit>()
+        val connector = FakeWorkerConnector(
+            connectionStarted = connectionStarted,
+            blockConnection = releaseConnection
+        )
+        val hooks = FakeShutdownHooks()
+        val lifecycle = WorkerLifecycle(connector, hooks, retryDelay = { delay(10) })
+
+        val job = lifecycle.start(CoroutineScope(Dispatchers.Default))
+        connectionStarted.await()
+        lifecycle.stop()
+        lifecycle.close()
+
+        assertFalse(job.isActive)
+        assertEquals(0, connector.runtime?.startCount ?: 0)
+        assertTrue(hooks.callbacks.isEmpty())
+    }
+
+    @Test
+    fun `shutdown hook stops lifecycle`() = runBlocking {
+        val runtime = FakeWorkerRuntime()
+        val hooks = FakeShutdownHooks()
+        val lifecycle = WorkerLifecycle(FakeWorkerConnector(runtime), hooks, retryDelay = { })
+
+        lifecycle.start(CoroutineScope(Dispatchers.Default))
+        runtime.started.await()
+        hooks.callbacks.single().invoke()
+        lifecycle.close()
+
+        assertEquals(1, runtime.stopCount)
+    }
+
+    @Test
+    fun `close failure is suppressed behind the primary failure`() = runBlocking {
+        val startupFailure = IllegalStateException("startup failed")
+        val closeFailure = IllegalArgumentException("close failed")
+        val runtime = FakeWorkerRuntime(startFailure = startupFailure, stopFailure = closeFailure)
+        val lifecycle = WorkerLifecycle(
+            connector = FakeWorkerConnector(runtime),
+            shutdownHooks = FakeShutdownHooks(),
+            retryDelay = { }
+        )
+
+        val job = lifecycle.start(CoroutineScope(Dispatchers.Default))
+        val thrown = try {
+            withTimeout(2_000) { job.await() }
+            error("Expected startup failure")
+        } catch (exception: IllegalStateException) {
+            exception
+        }
+
+        assertNotNull(thrown)
+        assertEquals(1, runtime.stopCount)
+        assertEquals(startupFailure::class, thrown::class)
+        assertEquals(startupFailure.message, thrown.message)
+        assertEquals(listOf(closeFailure), startupFailure.suppressed.toList())
+    }
+
+    private class FakeShutdownHooks : ShutdownHookRegistrar {
+        val callbacks = mutableListOf<() -> Unit>()
+
+        override fun register(callback: () -> Unit) {
+            callbacks += callback
+        }
+    }
+
+    private class FakeWorkerConnector(
+        private val defaultRuntime: FakeWorkerRuntime? = null,
+        private val failuresBeforeSuccess: Int = 0,
+        private val failure: Exception? = null,
+        private val connectionStarted: CompletableDeferred<Unit>? = null,
+        private val blockConnection: CompletableDeferred<Unit>? = null,
+        private val startFailure: Exception? = null
+    ) : WorkerConnector {
+        var attempts = 0
+        var runtime: FakeWorkerRuntime? = null
+
+        override suspend fun connect(): WorkerRuntime {
+            attempts++
+            connectionStarted?.complete(Unit)
+            blockConnection?.await()
+            failure?.let { throw it }
+            if (attempts <= failuresBeforeSuccess) {
+                throw IllegalStateException("temporary failure")
+            }
+            return (defaultRuntime ?: FakeWorkerRuntime(startFailure = startFailure)).also { runtime = it }
+        }
+    }
+
+    private class FakeWorkerRuntime(
+        private val startFailure: Exception? = null,
+        private val stopFailure: Exception? = null
+    ) : WorkerRuntime {
+        val started = CompletableDeferred<Unit>()
+        var startCount = 0
+        var stopCount = 0
+
+        override suspend fun start(scope: CoroutineScope) {
+            startCount++
+            startFailure?.let { throw it }
+            started.complete(Unit)
+        }
+
+        override suspend fun stop() {
+            stopCount++
+            stopFailure?.let { throw it }
+        }
+    }
+}

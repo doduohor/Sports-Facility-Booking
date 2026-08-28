@@ -10,9 +10,14 @@ class RabbitMqConsumer(
     private val messageHandler: MessageHandler
 ){
     private val logger = LoggerFactory.getLogger("RabbitMqConsumer")
+    private var connection: RabbitMqConnection? = null
+    private var consumerTag: String? = null
 
-    fun startConsuming(connection: RabbitMqConnection, config: RabbitMqConfig){
-        connection.channel.basicConsume(config.queue, false, { consumerTag, delivery ->
+    @Synchronized
+    fun startConsuming(connection: RabbitMqConnection, config: RabbitMqConfig) {
+        check(this.connection == null) { "RabbitMqConsumer is already started" }
+        this.connection = connection
+        consumerTag = connection.channel.basicConsume(config.queue, false, { _, delivery ->
             val body = String(delivery.body, Charsets.UTF_8)
             try {
                 logger.info("Received message: {}", body)
@@ -29,8 +34,20 @@ class RabbitMqConsumer(
                 logger.error("Failed to process message: {}", body, e)
                 connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
             }
-        }, { consumerTag ->
-            logger.info("Consumer cancelled: $consumerTag")
+        }, { cancelledTag ->
+            logger.info("Consumer cancelled: $cancelledTag")
         })
+    }
+
+    @Synchronized
+    fun stopConsuming() {
+        val currentConnection = connection ?: return
+        val currentTag = consumerTag ?: return
+        try {
+            currentConnection.channel.basicCancel(currentTag)
+        } finally {
+            consumerTag = null
+            connection = null
+        }
     }
 }

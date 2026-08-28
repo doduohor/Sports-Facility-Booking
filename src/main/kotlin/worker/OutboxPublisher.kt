@@ -6,16 +6,54 @@ import com.doduohor.events.SaveErrorResult
 import com.doduohor.events.StartPublishingResult
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import com.doduohor.infrastructure.messaging.OutboxEventMapper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
 class OutboxPublisher(
     private val outboxEventsRepository: OutboxEventsRepository,
-    private val messagePublisher: MessagePublisher
+    private val messagePublisher: MessagePublisher,
+    private val pollIntervalMillis: Long = 2_000,
+    private val wait: suspend (Long) -> Unit = { delay(it) }
 ) {
     private val logger = LoggerFactory.getLogger("OutboxPublisher")
+    private var job: Job? = null
+    private var stopped = false
 
-    fun publishMessage() {
+    @Synchronized
+    fun start(scope: CoroutineScope): Job {
+        check(!stopped) { "OutboxPublisher is already stopped" }
+        return job ?: scope.launch {
+            while (isActive) {
+                try {
+                    publishMessage()
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    logger.error("Outbox polling iteration failed", exception)
+                }
+                wait(pollIntervalMillis)
+                yield()
+            }
+        }.also { job = it }
+    }
+
+    suspend fun close() {
+        val currentJob = synchronized(this) {
+            stopped = true
+            job
+        }
+        currentJob?.cancel()
+        currentJob?.join()
+    }
+
+    suspend fun publishMessage() {
         val newEvents = outboxEventsRepository.findUnprocessedEvents()
 
         for (event in newEvents) {
@@ -47,6 +85,8 @@ class OutboxPublisher(
                 val rabbitEvent = OutboxEventMapper.toRabbitMqEvent(event)
                 val message = Json.encodeToString(rabbitEvent)
                 messagePublisher.publish(message)
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (exception: Exception) {
                 val errorMessage = exception.message
                     ?: exception::class.simpleName

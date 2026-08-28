@@ -28,7 +28,7 @@ class ProductionModuleTest {
     private class FakeMessagePublisher : MessagePublisher {
         val messages = mutableListOf<String>()
 
-        override fun publish(message: String) {
+        override suspend fun publish(message: String) {
             messages.add(message)
         }
     }

@@ -72,6 +72,9 @@ services:
       dockerfile: Dockerfile.runtime
     entrypoint: ["java", "-cp", "/app/app.jar", "com.doduohor.worker.WorkerMainKt"]
     environment:
+      DATABASE_URL: "jdbc:postgresql://postgres:5432/${POSTGRES_DB}"
+      DATABASE_USER: "${POSTGRES_USER}"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD}"
       RABBIT_HOST: "${RABBIT_HOST}"
       RABBIT_PORT: "5672"
       RABBIT_USER: "${RABBIT_USER}"
@@ -90,6 +93,8 @@ services:
       MONGO_PASSWORD: "${MONGO_ROOT_PASSWORD}"
       MONGO_DATABASE: "${MONGO_DATABASE}"
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbit:
         condition: service_healthy
 
