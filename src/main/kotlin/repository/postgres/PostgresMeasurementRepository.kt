@@ -53,11 +53,12 @@ class PostgresMeasurementRepository(
     override fun findByEquipmentId(equipmentId: EquipmentId): List<Measurement> = transaction(database) {
         MeasurementTable.selectAll()
             .where { MeasurementTable.equipmentId eq equipmentId.value }
+            .orderBy(MeasurementTable.id)
             .map { row -> toMeasurement(row) }
     }
 
     override fun findAll(): List<Measurement> = transaction(database) {
-        MeasurementTable.selectAll().map { row -> toMeasurement(row) }
+        MeasurementTable.selectAll().orderBy(MeasurementTable.id).map { row -> toMeasurement(row) }
     }
 
     private fun toMeasurement(row: ResultRow): Measurement =

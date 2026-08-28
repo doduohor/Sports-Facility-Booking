@@ -22,7 +22,8 @@ class InMemoryFacilityRepository : FacilityRepository {
         }
     }
 
-    override fun save(facility: Facility): Facility {
+    override fun save(facility: Facility): Facility? {
+        if (facility.id !in facilities) return null
         facilities[facility.id] = facility
         return facility
     }

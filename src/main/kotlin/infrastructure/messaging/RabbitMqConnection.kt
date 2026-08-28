@@ -8,7 +8,11 @@ class RabbitMqConnection(
     val channel: Channel
 ){
     fun close(){
-        channel.close()
-        connection.close()
+        if (channel.isOpen) {
+            channel.close()
+        }
+        if (connection.isOpen) {
+            connection.close()
+        }
     }
 }

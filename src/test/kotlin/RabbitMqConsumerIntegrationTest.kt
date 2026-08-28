@@ -2,6 +2,7 @@ package com.doduohor
 
 import com.doduohor.events.EventHistoryDocument
 import com.doduohor.events.IntegrationEventType
+import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.infrastructure.messaging.RabbitMqConfig
 import com.doduohor.infrastructure.messaging.RabbitMqConsumer
 import com.doduohor.infrastructure.messaging.RabbitMqConnection
@@ -28,6 +29,7 @@ import org.testcontainers.rabbitmq.RabbitMQContainer
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -128,6 +130,72 @@ class RabbitMqConsumerIntegrationTest {
         assertEquals(1, historyRepository.failedEventIds.size)
     }
 
+    @Test
+    fun `factory declares DLQ topology on a clean broker`() {
+        val topologyConfig = config.copy(
+            exchange = "test.topology.events",
+            queue = "test.topology.events.queue",
+            deadLetterExchange = "test.topology.events.dlq",
+            deadLetterQueue = "test.topology.events.dlq.queue"
+        )
+
+        val topologyConnection = RabbitMqFactory.connect(topologyConfig)
+        try {
+            assertEquals(topologyConfig.queue, topologyConnection.channel.queueDeclarePassive(topologyConfig.queue).queue)
+            assertEquals(topologyConfig.deadLetterQueue, topologyConnection.channel.queueDeclarePassive(topologyConfig.deadLetterQueue).queue)
+        } finally {
+            topologyConnection.close()
+        }
+    }
+
+    @Test
+    fun `second message waits until first handler completes`() {
+        val sender = BlockingNotificationSender()
+        val processedLatch = CountDownLatch(2)
+        val historyRepository = FakeEventHistoryRepository(processedLatch = processedLatch)
+        RabbitMqConsumer(MessageHandler(sender, historyRepository, fixedClock)).startConsuming(connection, config)
+
+        publish(importantIncidentMessage())
+        publish(importantIncidentMessage())
+
+        assertTrue(sender.firstSendStarted.await(10, TimeUnit.SECONDS))
+        assertEquals(1, sender.sendCount.get())
+        sender.releaseFirstSend.countDown()
+        assertTrue(processedLatch.await(10, TimeUnit.SECONDS))
+        assertEquals(2, sender.sendCount.get())
+    }
+
+    @Test
+    fun `duplicate event id performs notification side effect once`() {
+        val attemptsLatch = CountDownLatch(2)
+        val sender = CountingNotificationSender()
+        val historyRepository = DuplicateSuppressingEventHistoryRepository(attemptsLatch)
+        RabbitMqConsumer(MessageHandler(sender, historyRepository, fixedClock)).startConsuming(connection, config)
+        val message = importantIncidentMessage()
+
+        publish(message)
+        publish(message)
+
+        assertTrue(attemptsLatch.await(10, TimeUnit.SECONDS))
+        assertEquals(1, sender.sendCount.get())
+    }
+
+    @Test
+    fun `closing channel during handling requeues message without sending it to DLQ`() {
+        val sender = BlockingNotificationSender()
+        val historyRepository = FakeEventHistoryRepository()
+        RabbitMqConsumer(MessageHandler(sender, historyRepository, fixedClock)).startConsuming(connection, config)
+        val message = importantIncidentMessage()
+
+        publish(message)
+        assertTrue(sender.firstSendStarted.await(10, TimeUnit.SECONDS))
+        connection.channel.close()
+        sender.releaseFirstSend.countDown()
+
+        assertEquals(message, awaitMessage(config.queue))
+        assertNull(readFromQueue(config.deadLetterQueue))
+    }
+
     private fun readFromQueue(queue: String): String? {
         val inspectionConnection = RabbitMqFactory.connect(config)
         return try {
@@ -140,22 +208,22 @@ class RabbitMqConsumerIntegrationTest {
     }
 
     private fun awaitMessage(queue: String): String? {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         val inspectionConnection = RabbitMqFactory.connect(config)
         return try {
-            while (System.nanoTime() < deadline) {
-                val message = inspectionConnection.channel.basicGet(queue, true)
-                    ?.body
-                    ?.toString(Charsets.UTF_8)
-                if (message != null) {
-                    return message
-                }
-                Thread.sleep(100)
-            }
-            null
+            val received = arrayOfNulls<String>(1)
+            val receivedLatch = CountDownLatch(1)
+            inspectionConnection.channel.basicConsume(queue, true, { _, delivery ->
+                received[0] = delivery.body.toString(Charsets.UTF_8)
+                receivedLatch.countDown()
+            }, {})
+            if (receivedLatch.await(10, TimeUnit.SECONDS)) received[0] else null
         } finally {
             inspectionConnection.close()
         }
+    }
+
+    private fun publish(message: String) {
+        connection.channel.basicPublish(config.exchange, config.routingKey, null, message.toByteArray())
     }
 
     private fun validMeasurementMessage(): String =
@@ -185,9 +253,73 @@ class RabbitMqConsumerIntegrationTest {
             )
         )
 
+    private fun importantIncidentMessage(): String =
+        Json.encodeToString(
+            RabbitMqEvent.create(
+                eventType = IntegrationEventType.INCIDENT_CREATED,
+                clock = fixedClock,
+                data = buildJsonObject {
+                    put("id", 1L)
+                    put("facilityId", 2L)
+                    put("equipmentId", 3L)
+                    put("measurementId", 4L)
+                    put("type", "OUT_OF_RANGE")
+                    put("severity", IncidentSeverity.CRITICAL.name)
+                    put("status", "OPEN")
+                    put("measurementType", "TEMPERATURE")
+                    put("measurementUnit", "CELSIUS")
+                    put("value", 99.0)
+                    put("createdAt", "2026-08-18T12:00:00Z")
+                }
+            )
+        )
+
     private class FakeNotificationSender : NotificationSender {
         override fun send(message: String): NotificationSenderResult =
             NotificationSenderResult.Success
+    }
+
+    private class CountingNotificationSender : NotificationSender {
+        val sendCount = AtomicInteger()
+
+        override fun send(message: String): NotificationSenderResult {
+            sendCount.incrementAndGet()
+            return NotificationSenderResult.Success
+        }
+    }
+
+    private class BlockingNotificationSender : NotificationSender {
+        val firstSendStarted = CountDownLatch(1)
+        val releaseFirstSend = CountDownLatch(1)
+        val sendCount = AtomicInteger()
+
+        override fun send(message: String): NotificationSenderResult {
+            if (sendCount.incrementAndGet() == 1) {
+                firstSendStarted.countDown()
+                check(releaseFirstSend.await(10, TimeUnit.SECONDS)) { "first handler was not released" }
+            }
+            return NotificationSenderResult.Success
+        }
+    }
+
+    private class DuplicateSuppressingEventHistoryRepository(
+        private val attemptsLatch: CountDownLatch
+    ) : EventHistoryRepository {
+        private var alreadyStarted = false
+
+        override suspend fun save(event: EventHistoryDocument): EventHistoryDocument = event
+        override suspend fun findById(eventId: String): EventHistoryDocument? = null
+        override suspend fun findByType(type: String): List<EventHistoryDocument> = emptyList()
+        override suspend fun createIndexes() = Unit
+        override suspend fun tryStartProcessing(event: EventHistoryDocument): MarkStartProcessingResult {
+            attemptsLatch.countDown()
+            return if (alreadyStarted) MarkStartProcessingResult.AlreadyProcessed else {
+                alreadyStarted = true
+                MarkStartProcessingResult.Started
+            }
+        }
+        override suspend fun markProcessed(eventId: String) = MarkProcessedResult.Updated
+        override suspend fun markFailed(eventId: String, errorMessage: String) = MarkFailedResult.Updated
     }
 
     private class FakeEventHistoryRepository(

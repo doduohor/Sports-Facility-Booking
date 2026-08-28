@@ -12,22 +12,28 @@ class RabbitMqConsumer(
     private val logger = LoggerFactory.getLogger("RabbitMqConsumer")
 
     fun startConsuming(connection: RabbitMqConnection, config: RabbitMqConfig){
+        connection.channel.basicQos(1)
         connection.channel.basicConsume(config.queue, false, { consumerTag, delivery ->
             val body = String(delivery.body, Charsets.UTF_8)
-            try {
+            val result = try {
                 logger.info("Received message: {}", body)
-                when(runBlocking { messageHandler.handle(body) }){
-                    MessageHandlerResult.Failure -> {
-                        logger.error("Failed to process message: {}", body)
-                        connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
-                        return@basicConsume
-                    }
-                    MessageHandlerResult.Success -> logger.info("Your message has been processed successfully: {}", body)
-                }
-                connection.channel.basicAck(delivery.envelope.deliveryTag, false)
+                runBlocking { messageHandler.handle(body) }
             } catch (e: Exception) {
                 logger.error("Failed to process message: {}", body, e)
+                MessageHandlerResult.Failure
+            }
+
+            if (result == MessageHandlerResult.Failure) {
+                logger.error("Failed to process message: {}", body)
                 connection.channel.basicNack(delivery.envelope.deliveryTag, false, false)
+                return@basicConsume
+            }
+
+            logger.info("Your message has been processed successfully: {}", body)
+            try {
+                connection.channel.basicAck(delivery.envelope.deliveryTag, false)
+            } catch (e: Exception) {
+                logger.error("Failed to acknowledge message: {}", body, e)
             }
         }, { consumerTag ->
             logger.info("Consumer cancelled: $consumerTag")

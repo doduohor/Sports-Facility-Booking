@@ -75,11 +75,12 @@ class PostgresBookingRepository(
     override fun findByFacilityId(id: FacilityId): List<Booking> = transaction(database) {
         BookingTable.selectAll()
             .where { BookingTable.facilityId eq id.value }
+            .orderBy(BookingTable.id)
             .map{ row -> toBooking(row)}
     }
 
     override fun findAll(): List<Booking> = transaction(database){
-        BookingTable.selectAll().map{ row -> toBooking(row) }
+        BookingTable.selectAll().orderBy(BookingTable.id).map{ row -> toBooking(row) }
     }
 
 

@@ -121,7 +121,11 @@ class ServerTest {
             "/api/equipments" to "{",
             "/api/measurements" to "{",
             "/api/incidents" to "{",
-            "/api/facilities" to ""
+            "/api/facilities" to "",
+            "/api/bookings" to "",
+            "/api/equipments" to "",
+            "/api/measurements" to "",
+            "/api/incidents" to ""
         )
 
         requests.forEach { (path, body) ->
@@ -213,13 +217,21 @@ class ServerTest {
             contentType(ContentType.Text.Plain)
             setBody("name=Central Pool&type=POOL")
         }
-        assertJsonError(contentTypeResponse, HttpStatusCode.BadRequest)
+        assertExactJsonError(
+            contentTypeResponse,
+            HttpStatusCode.UnsupportedMediaType,
+            "non-JSON Content-Type"
+        )
 
         val missingContentTypeResponse = client.post("/api/facilities") {
             basicAuth(TEST_USERNAME, TEST_PASSWORD)
             setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\"}")
         }
-        assertJsonError(missingContentTypeResponse, HttpStatusCode.BadRequest)
+        assertExactJsonError(
+            missingContentTypeResponse,
+            HttpStatusCode.UnsupportedMediaType,
+            "missing Content-Type"
+        )
 
         val acceptResponse = client.post("/api/facilities") {
             basicAuth(TEST_USERNAME, TEST_PASSWORD)
@@ -227,7 +239,7 @@ class ServerTest {
             contentType(ContentType.Application.Json)
             setBody("{\"name\":\"Central Pool\",\"type\":\"POOL\"}")
         }
-        assertJsonError(acceptResponse, HttpStatusCode.NotAcceptable)
+        assertExactJsonError(acceptResponse, HttpStatusCode.NotAcceptable, "unsupported Accept")
     }
 
     @Test
@@ -241,6 +253,87 @@ class ServerTest {
         }
 
         assertJsonError(response, HttpStatusCode.BadRequest)
+    }
+
+    @Test
+    fun `all write routes reject malformed JSON request shapes with the exact error contract`() = testApplication {
+        configureTestApplication()
+        createFacility("Central Pool", "POOL")
+        activateFacility(1)
+        val routes = listOf(
+            WriteRoute("/api/facilities", "{\"name\":\"Central Pool\",\"type\":\"POOL\"}", "name", "type"),
+            WriteRoute("/api/bookings", "{\"facilityId\":1,\"customerId\":900,\"startTime\":\"10:00\",\"endTime\":\"11:00\",\"bookingDate\":\"2026-07-28\"}", "startTime", null),
+            WriteRoute("/api/equipments", "{\"facilityId\":1,\"name\":\"Thermometer\",\"type\":\"HEATING\"}", "name", "type"),
+            WriteRoute("/api/measurements", "{\"equipmentId\":1,\"type\":\"TEMPERATURE\",\"unit\":\"CELSIUS\",\"value\":1.0}", "unit", "type"),
+            WriteRoute("/api/incidents", "{\"facilityId\":1,\"equipmentId\":1,\"measurementId\":1,\"type\":\"HIGH_TEMPERATURE\",\"severity\":\"HIGH\",\"measurementType\":\"TEMPERATURE\",\"measurementUnit\":\"CELSIUS\",\"value\":1.0}", "severity", "type")
+        )
+
+        routes.forEach { route ->
+            listOf(
+                "missing ${route.requiredField}" to route.body.replaceFirst(Regex("\\\"${route.requiredField}\\\":(?:\\\"[^\\\"]*\\\"|[^,}]+),?"), ""),
+                "null ${route.requiredField}" to route.body.replace("\"${route.requiredField}\":\"${route.requiredValue(route.requiredField)}\"", "\"${route.requiredField}\":null"),
+                "wrong scalar type for ${route.requiredField}" to route.body.replace("\"${route.requiredField}\":\"${route.requiredValue(route.requiredField)}\"", "\"${route.requiredField}\":1"),
+                "empty ${route.requiredField}" to route.body.replace("\"${route.requiredField}\":\"${route.requiredValue(route.requiredField)}\"", "\"${route.requiredField}\":\"\""),
+                "empty request body" to "",
+                "array instead of object" to "[]",
+                "malformed JSON" to "{",
+                "extra field" to route.body.dropLast(1) + ",\"extra\":true}"
+            ).forEach { (case, body) ->
+                assertExactJsonError(
+                    writeRequest(route.path, body),
+                    HttpStatusCode.BadRequest,
+                    "$case for ${route.path}",
+                    route.errorFor(case)
+                )
+            }
+
+            route.enumCases().forEach { (enumField, expected) ->
+                val body = route.body.replace("\"$enumField\":\"${route.requiredValue(enumField)}\"", "\"$enumField\":\"UNKNOWN\"")
+                assertExactJsonError(
+                    writeRequest(route.path, body),
+                    HttpStatusCode.BadRequest,
+                    "unknown $enumField enum for ${route.path}",
+                    expected
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `all write routes reject unsupported headers with the exact error contract`() = testApplication {
+        configureTestApplication()
+        val routes = listOf(
+            WriteRoute("/api/facilities", "{\"name\":\"Central Pool\",\"type\":\"POOL\"}", "name", "type"),
+            WriteRoute("/api/bookings", "{\"facilityId\":1,\"customerId\":900,\"startTime\":\"10:00\",\"endTime\":\"11:00\",\"bookingDate\":\"2026-07-28\"}", "startTime", null),
+            WriteRoute("/api/equipments", "{\"facilityId\":1,\"name\":\"Thermometer\",\"type\":\"HEATING\"}", "name", "type"),
+            WriteRoute("/api/measurements", "{\"equipmentId\":1,\"type\":\"TEMPERATURE\",\"unit\":\"CELSIUS\",\"value\":1.0}", "unit", "type"),
+            WriteRoute("/api/incidents", "{\"facilityId\":1,\"equipmentId\":1,\"measurementId\":1,\"type\":\"HIGH_TEMPERATURE\",\"severity\":\"HIGH\",\"measurementType\":\"TEMPERATURE\",\"measurementUnit\":\"CELSIUS\",\"value\":1.0}", "severity", "type"),
+            WriteRoute("/api/facilities/1/activate", "{}", "", null)
+        )
+
+        routes.forEach { route ->
+            assertExactJsonError(writeRequest(route.path, "{}", null), HttpStatusCode.UnsupportedMediaType, "missing Content-Type for ${route.path}")
+            assertExactJsonError(writeRequest(route.path, "{}", ContentType.Text.Plain), HttpStatusCode.UnsupportedMediaType, "non-JSON Content-Type for ${route.path}")
+            assertExactJsonError(
+                writeRequest(route.path, route.body, ContentType.Application.Json, "application/xml"),
+                HttpStatusCode.NotAcceptable,
+                "unsupported Accept for ${route.path}"
+            )
+        }
+    }
+
+    @Test
+    fun `activate facility rejects request bodies with the exact error contract`() = testApplication {
+        configureTestApplication()
+
+        listOf("{}", "[]", "{").forEach { body ->
+            assertExactJsonError(
+                writeRequest("/api/facilities/1/activate", body),
+                HttpStatusCode.BadRequest,
+                "request body $body",
+                ErrorResponse(400, "unexpectedRequestBody", "This endpoint does not accept a request body")
+            )
+        }
     }
 
     @Test
@@ -559,7 +652,12 @@ class ServerTest {
 
         requests.forEach { (date, start, end) ->
             val response = createBooking(1, 900, bookingDate = date, startTime = start, endTime = end)
-            assertJsonError(response, HttpStatusCode.BadRequest)
+            assertExactJsonError(
+                response,
+                HttpStatusCode.BadRequest,
+                "booking date/time case: $date $start-$end",
+                ErrorResponse(400, "invalidTimeInterval", "The time interval must be between 1 and 12 hours.")
+            )
         }
     }
 
@@ -578,7 +676,12 @@ class ServerTest {
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
-            assertJsonError(response, HttpStatusCode.BadRequest)
+            assertExactJsonError(
+                response,
+                HttpStatusCode.BadRequest,
+                "non-finite measurement: $body",
+                ErrorResponse(400, "invalidRequest", "The request body is invalid")
+            )
         }
     }
 
@@ -593,9 +696,11 @@ class ServerTest {
             assertEquals(HttpStatusCode.Created, createMeasurement(equipmentId, "TEMPERATURE", "CELSIUS", value).status)
         }
         listOf(-50.1, 100.1).forEach { value ->
-            assertJsonError(
+            assertExactJsonError(
                 createMeasurement(equipmentId, "TEMPERATURE", "CELSIUS", value),
-                HttpStatusCode.BadRequest
+                HttpStatusCode.BadRequest,
+                "out-of-range measurement: $value",
+                ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
             )
         }
     }
@@ -1298,6 +1403,115 @@ class ServerTest {
         val pattern = Regex(""""$fieldName"\s*:\s*(\d+)""")
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
             ?: error("Response does not contain numeric field '$fieldName': $body")
+    }
+
+    private data class WriteRoute(
+        val path: String,
+        val body: String,
+        val requiredField: String,
+        val enumField: String?
+    ) {
+        fun requiredValue(field: String): String =
+            Regex("\\\"$field\\\":\\\"([^\\\"]*)\\\"").find(body)?.groupValues?.get(1)
+                ?: error("Field '$field' is not a string field in $body")
+
+        fun errorFor(case: String): ErrorResponse = when {
+            case == "empty request body" -> ErrorResponse(400, "invalidRequest", "The request body is invalid")
+
+            case.startsWith("empty") -> when (path) {
+                "/api/facilities" -> ErrorResponse(400, "invalidName", "Facility name must not be blank")
+                "/api/bookings" -> ErrorResponse(400, "invalidTimeInterval", "The time interval must be between 1 and 12 hours.")
+                "/api/equipments" -> ErrorResponse(400, "invalidName", "An incorrect name has been specified")
+                "/api/measurements" -> ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
+                "/api/incidents" -> ErrorResponse(400, "invalidSeverity", "An incorrect incident severity has been specified")
+                else -> error("Unknown route $path")
+            }
+
+            case == "unknown enum" -> when (path) {
+                "/api/facilities" -> ErrorResponse(400, "invalidType", "The specified type does not exist in the system")
+                "/api/equipments" -> ErrorResponse(400, "invalidType", "An incorrect type has been specified")
+                "/api/measurements" -> ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified")
+                "/api/incidents" -> ErrorResponse(400, "invalidType", "An incorrect incident type has been specified")
+                else -> error("Unknown enum route $path")
+            }
+
+            else -> ErrorResponse(400, "invalidRequest", "The request body is invalid")
+        }
+
+        fun enumCases(): List<Pair<String, ErrorResponse>> = when (path) {
+            "/api/facilities" -> listOf(
+                "type" to ErrorResponse(400, "invalidType", "The specified type does not exist in the system")
+            )
+
+            "/api/equipments" -> listOf(
+                "type" to ErrorResponse(400, "invalidType", "An incorrect type has been specified")
+            )
+
+            "/api/measurements" -> listOf(
+                "type" to ErrorResponse(400, "invalidType", "An incorrect measurement type has been specified"),
+                "unit" to ErrorResponse(400, "invalidUnit", "An incorrect measurement unit has been specified")
+            )
+
+            "/api/incidents" -> listOf(
+                "type" to ErrorResponse(400, "invalidType", "An incorrect incident type has been specified"),
+                "severity" to ErrorResponse(400, "invalidSeverity", "An incorrect incident severity has been specified"),
+                "measurementType" to ErrorResponse(400, "invalidMeasurementType", "An incorrect measurement type has been specified"),
+                "measurementUnit" to ErrorResponse(400, "invalidMeasurementUnit", "An incorrect measurement unit has been specified")
+            )
+
+            else -> emptyList()
+        }
+    }
+
+    private suspend fun ApplicationTestBuilder.writeRequest(
+        path: String,
+        body: String,
+        requestContentType: ContentType? = ContentType.Application.Json,
+        accept: String? = null
+    ) = when (path) {
+        "/api/facilities/1/activate" -> client.put(path) {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            requestContentType?.let(::contentType)
+            accept?.let { header("Accept", it) }
+            setBody(body)
+        }
+
+        else -> client.post(path) {
+            basicAuth(TEST_USERNAME, TEST_PASSWORD)
+            requestContentType?.let(::contentType)
+            accept?.let { header("Accept", it) }
+            setBody(body)
+        }
+    }
+
+    private suspend fun assertExactJsonError(
+        response: io.ktor.client.statement.HttpResponse,
+        status: HttpStatusCode,
+        case: String,
+        expected: ErrorResponse = ErrorResponse(status.value, errorName(status), errorText(status))
+    ) {
+        val body = response.bodyAsText()
+        assertEquals(status, response.status, "$case: $body")
+        assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters(), "$case: $body")
+        assertEquals(
+            expected,
+            Json.decodeFromString<ErrorResponse>(body),
+            "$case: $body"
+        )
+    }
+
+    private fun errorName(status: HttpStatusCode) = when (status) {
+        HttpStatusCode.BadRequest -> "invalidRequest"
+        HttpStatusCode.UnsupportedMediaType -> "unsupportedContentType"
+        HttpStatusCode.NotAcceptable -> "unsupportedAccept"
+        else -> error("Unexpected status $status")
+    }
+
+    private fun errorText(status: HttpStatusCode) = when (status) {
+        HttpStatusCode.BadRequest -> "The request body is invalid"
+        HttpStatusCode.UnsupportedMediaType -> "The Content-Type header is not supported"
+        HttpStatusCode.NotAcceptable -> "The Accept header is not supported"
+        else -> error("Unexpected status $status")
     }
 
     private suspend fun assertJsonError(response: io.ktor.client.statement.HttpResponse, status: HttpStatusCode) {

@@ -1,7 +1,6 @@
 package com.doduohor.repository.postgres
 
 import com.doduohor.domain.model.Equipment
-import com.doduohor.domain.model.EquipmentCreateResult
 import com.doduohor.domain.model.EquipmentStatus
 import com.doduohor.domain.model.EquipmentType
 import com.doduohor.infrastructure.database.postgres.EquipmentTable
@@ -18,22 +17,23 @@ import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 class PostgresEquipmentRepository(private val database: Database) : EquipmentRepository {
     override fun create(facilityId: FacilityId, name: String, type: EquipmentType): CreateEquipmentResult = transaction(database) {
+        if (name.isBlank()) return@transaction CreateEquipmentResult.InvalidName
+        val normalizedName = name.trim()
         val insertedRow = EquipmentTable.insert {
             it[EquipmentTable.facilityId] = facilityId.value
-            it[EquipmentTable.name] = name
+            it[EquipmentTable.name] = normalizedName
             it[EquipmentTable.type] = type.name
             it[EquipmentTable.status] = Equipment.DEFAULT_STATUS.name
         }
 
-        when(val equipment = Equipment.createNew(
+        val equipment = Equipment(
             id = EquipmentId(insertedRow[EquipmentTable.id]),
             facilityId = facilityId,
-            name = name,
-            type = type
-        )){
-            EquipmentCreateResult.InvalidName -> CreateEquipmentResult.InvalidName
-            is EquipmentCreateResult.Success -> CreateEquipmentResult.Success(equipment.equipment)
-        }
+            name = normalizedName,
+            type = type,
+            status = Equipment.DEFAULT_STATUS
+        )
+        CreateEquipmentResult.Success(equipment)
     }
 
     override fun findByEquipmentId(equipmentId: EquipmentId): Equipment? = transaction(database) {
@@ -48,11 +48,12 @@ class PostgresEquipmentRepository(private val database: Database) : EquipmentRep
     override fun findByFacilityId(facilityId: FacilityId): List<Equipment> = transaction(database) {
         EquipmentTable.selectAll()
             .where { EquipmentTable.facilityId eq facilityId.value }
+            .orderBy(EquipmentTable.id)
             .map { row -> toEquipment(row) }
     }
 
     override fun findAll(): List<Equipment> = transaction(database) {
-        EquipmentTable.selectAll().map { row -> toEquipment(row) }
+        EquipmentTable.selectAll().orderBy(EquipmentTable.id).map { row -> toEquipment(row) }
     }
 
     private fun toEquipment(row: ResultRow): Equipment =

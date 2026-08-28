@@ -103,7 +103,7 @@ class MongoEventHistoryRepositoryTest {
     }
 
     @Test
-    fun `tryStartProcessing returns false when event id already exists`() = runBlocking {
+    fun `tryStartProcessing returns already processing without replacing duplicate event document`() = runBlocking {
         repository.createIndexes()
         val event = event(
             id = 1,
@@ -112,10 +112,12 @@ class MongoEventHistoryRepositoryTest {
         )
 
         val firstStart = repository.tryStartProcessing(event)
+        val storedAfterFirstStart = repository.findById("event-1")
         val secondStart = repository.tryStartProcessing(event)
 
         assertEquals(MarkStartProcessingResult.Started, firstStart)
         assertEquals(MarkStartProcessingResult.AlreadyProcessing, secondStart)
+        assertEquals(storedAfterFirstStart, repository.findById("event-1"))
         assertEquals(1, repository.findByType("MEASUREMENT_CREATED").size)
     }
 
@@ -149,14 +151,17 @@ class MongoEventHistoryRepositoryTest {
                 id = 1,
                 type = "INCIDENT_CREATED",
                 status = EventHistoryStatus.FAILED,
-                attempt = 3
+                attempt = EventProcessingPolicy.MAX_ATTEMPTS
             )
         )
 
         val result = repository.tryStartProcessing(event(id = 1, type = "INCIDENT_CREATED"))
 
         assertEquals(MarkStartProcessingResult.AttemptsExceeded, result)
-        assertEquals(EventHistoryStatus.FAILED, repository.findById("event-1")?.status)
+        assertEquals(
+            event(id = 1, type = "INCIDENT_CREATED", status = EventHistoryStatus.FAILED, attempt = EventProcessingPolicy.MAX_ATTEMPTS),
+            repository.findById("event-1")
+        )
     }
 
     @Test
@@ -174,7 +179,15 @@ class MongoEventHistoryRepositoryTest {
         val result = repository.tryStartProcessing(event(id = 1, type = "INCIDENT_CREATED"))
 
         assertEquals(MarkStartProcessingResult.AlreadyProcessing, result)
-        assertEquals(1, repository.findById("event-1")?.attempt)
+        assertEquals(
+            event(
+                id = 1,
+                type = "INCIDENT_CREATED",
+                status = EventHistoryStatus.PROCESSING,
+                processingStartedAt = fixedInstant.toString()
+            ),
+            repository.findById("event-1")
+        )
     }
 
     @Test
@@ -220,16 +233,16 @@ class MongoEventHistoryRepositoryTest {
     }
 
     @Test
-    fun `markProcessed does not change non-processing event`() = runBlocking {
+    fun `markProcessed does not change processed event`() = runBlocking {
         repository.createIndexes()
-        repository.save(event(id = 1, type = "MEASUREMENT_CREATED"))
+        val processed = event(id = 1, type = "MEASUREMENT_CREATED")
+        repository.save(processed)
 
         val result = repository.markProcessed("event-1")
 
         val savedEvent = repository.findById("event-1")
         assertEquals(MarkProcessedResult.NotProcessing, result)
-        assertNotNull(savedEvent)
-        assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
+        assertEquals(processed, savedEvent)
     }
 
     @Test
@@ -259,17 +272,33 @@ class MongoEventHistoryRepositoryTest {
     }
 
     @Test
-    fun `markFailed does not change non-processing event`() = runBlocking {
+    fun `markFailed does not change processed event`() = runBlocking {
         repository.createIndexes()
-        repository.save(event(id = 1, type = "INCIDENT_CREATED"))
+        val processed = event(id = 1, type = "INCIDENT_CREATED")
+        repository.save(processed)
 
         val result = repository.markFailed("event-1", "telegram error")
 
         val savedEvent = repository.findById("event-1")
         assertEquals(MarkFailedResult.NotProcessing, result)
-        assertNotNull(savedEvent)
-        assertEquals(EventHistoryStatus.PROCESSED, savedEvent.status)
-        assertNull(savedEvent.errorMessage)
+        assertEquals(processed, savedEvent)
+    }
+
+    @Test
+    fun `markProcessed and markFailed do not change failed event`() = runBlocking {
+        repository.createIndexes()
+        val failed = event(
+            id = 1,
+            type = "INCIDENT_CREATED",
+            status = EventHistoryStatus.FAILED,
+            processingStartedAt = fixedInstant.minusSeconds(60).toString()
+        )
+        repository.save(failed)
+
+        assertEquals(MarkProcessedResult.NotProcessing, repository.markProcessed("event-1"))
+        assertEquals(MarkFailedResult.NotProcessing, repository.markFailed("event-1", "late error"))
+
+        assertEquals(failed, repository.findById("event-1"))
     }
 
     @Test
