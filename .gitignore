@@ -44,6 +44,6 @@ graphify-out/
 .planning
 
 docs/*
-!docs/adapter-contracts.md
 .superpowers/*
 AGENTS.md
+analize_docker/*
