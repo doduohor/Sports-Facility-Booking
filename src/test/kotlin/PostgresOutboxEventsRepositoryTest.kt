@@ -7,6 +7,7 @@ import com.doduohor.events.MakeAsPublishedResult
 import com.doduohor.events.OutboxEventStatus
 import com.doduohor.events.OutboxEvents
 import com.doduohor.events.SaveErrorResult
+import com.doduohor.events.SaveEventResult
 import com.doduohor.infrastructure.database.postgres.OutboxEventsTable
 import com.doduohor.infrastructure.time.FixedClock
 import com.doduohor.events.StartPublishingResult
@@ -90,6 +91,16 @@ class PostgresOutboxEventsRepositoryTest {
 
         val saved = repository.findUnprocessedEvents()
         assertEquals(listOf(event), saved)
+    }
+
+    @Test
+    fun `save returns error for duplicate event id instead of leaking database exception`() {
+        val event = event(status = OutboxEventStatus.NEW)
+
+        assertEquals(SaveEventResult.Success, repository.saveEvent(event))
+
+        assertEquals(SaveEventResult.Error, repository.saveEvent(event))
+        assertEquals(listOf(event.eventId), repository.findUnprocessedEvents().map { it.eventId })
     }
 
     @Test

@@ -40,9 +40,14 @@ import com.doduohor.service.IncidentServiceResult
 import com.doduohor.service.MeasurementService
 import com.doduohor.service.MonitoringService
 import com.doduohor.service.MonitoringServiceResult
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.receiveChannel
+import io.ktor.utils.io.readRemaining
 import io.ktor.server.application.*
 import io.ktor.server.auth.authenticate
+import io.ktor.server.request.contentType
 import io.ktor.server.request.receive
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -68,6 +73,17 @@ fun Application.configureRouting() {
     }
 }
 
+private suspend fun ApplicationCall.requireJsonContentType(): Boolean {
+    val contentType = request.headers[HttpHeaders.ContentType]?.let { request.contentType().withoutParameters() }
+    if (contentType == ContentType.Application.Json) return true
+
+    respond(
+        HttpStatusCode.UnsupportedMediaType,
+        ErrorResponse(415, "unsupportedContentType", "The Content-Type header is not supported")
+    )
+    return false
+}
+
 fun Route.healthRoutes() {
     get("/") {
         call.respond(HttpStatusCode.OK, SuccessResponse("Result", "Hello, World!"))
@@ -83,6 +99,7 @@ fun Route.healthRoutes() {
 fun Route.facilityRoutes(facilityService: FacilityService) {
     authenticate("auth-basic"){
         post("/api/facilities") {
+            if (!call.requireJsonContentType()) return@post
             val request = call.receive<FacilityCreate>()
             when(val result = ApiInputParsers.parseFacilityType(request.type)){
                 is ParsingResult.Error -> call.respond(
@@ -152,6 +169,14 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
 
     authenticate("auth-basic") {
         put("/api/facilities/{facilityId}/activate") {
+            if (!call.receiveChannel().readRemaining().exhausted()) {
+                if (!call.requireJsonContentType()) return@put
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ErrorResponse(400, "unexpectedRequestBody", "This endpoint does not accept a request body")
+                )
+                return@put
+            }
             val facilityId = call.parameters["facilityId"]?.toLongOrNull()
 
             if (facilityId == null) {
@@ -191,6 +216,7 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
 fun Route.bookingRoutes(bookingService: BookingService) {
     authenticate("auth-basic") {
         post("/api/bookings") {
+            if (!call.requireJsonContentType()) return@post
             val request = call.receive<BookingCreate>()
             val booking = bookingService.createBooking(
                 request.facilityId,
@@ -308,6 +334,7 @@ fun Route.bookingRoutes(bookingService: BookingService) {
 fun Route.equipmentRoutes(equipmentService: EquipmentService){
     authenticate("auth-basic"){
         post("/api/equipments") {
+            if (!call.requireJsonContentType()) return@post
             val request = call.receive<EquipmentCreate>()
             when(val parseTypeResult = ApiInputParsers.parseEquipmentType(request.type)){
                 is ParsingResult.Error -> call.respond(
@@ -403,6 +430,7 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
 fun Route.measurementRoutes(measurementService: MeasurementService, monitoringService: MonitoringService){
     authenticate("auth-basic") {
         post("/api/measurements") {
+            if (!call.requireJsonContentType()) return@post
             val request = call.receive<MeasurementCreate>()
             val parseTypeResult = ApiInputParsers.parseMeasurementType(request.type)
             if (parseTypeResult is ParsingResult.Error) {
@@ -577,6 +605,7 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
 fun Route.incidentRoutes(incidentService: IncidentService){
     authenticate("auth-basic") {
         post("/api/incidents") {
+            if (!call.requireJsonContentType()) return@post
             val request = call.receive<IncidentCreate>()
             val typeResult = ApiInputParsers.parseIncidentType(request.type)
             if (typeResult is ParsingResult.Error) {

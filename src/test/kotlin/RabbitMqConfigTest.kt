@@ -4,8 +4,23 @@ import com.doduohor.infrastructure.messaging.RabbitMqConfig
 import io.ktor.server.config.MapApplicationConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class RabbitMqConfigTest {
+
+    @Test
+    fun `fromEnv reports missing required variable`() {
+        assertFailsWith<IllegalStateException> {
+            RabbitMqConfig.fromEnv { name -> if (name == "RABBIT_HOST") null else "value" }
+        }
+    }
+
+    @Test
+    fun `fromEnv rejects invalid port`() {
+        assertFailsWith<IllegalArgumentException> {
+            RabbitMqConfig.fromEnv { name -> if (name == "RABBIT_PORT") "70000" else "value" }
+        }
+    }
 
     @Test
     fun `from reads rabbitmq config`() {

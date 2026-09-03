@@ -66,7 +66,7 @@ class PostgresFacilityRepository(
     }
 
     override fun findAll() = transaction(database) {
-        val foundedAllRows = FacilityTable.selectAll().toList()
+        val foundedAllRows = FacilityTable.selectAll().orderBy(FacilityTable.id).toList()
         val result = foundedAllRows.map { it -> Facility(
             id = FacilityId(it[FacilityTable.id]),
             name = it[FacilityTable.name],

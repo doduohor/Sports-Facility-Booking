@@ -1,22 +1,71 @@
 package com.doduohor.worker
 
 import com.doduohor.events.MakeAsPublishedResult
+import com.doduohor.events.OutboxEvents
 import com.doduohor.events.OutboxEventsRepository
 import com.doduohor.events.SaveErrorResult
 import com.doduohor.events.StartPublishingResult
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import com.doduohor.infrastructure.messaging.OutboxEventMapper
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
+/**
+ * Publishes claimed Outbox events. A cancellation after the claim deliberately
+ * leaves PROCESSING unchanged: the schema has no lease timestamp, so reclaiming
+ * it automatically would risk concurrent duplicate publication. Recovery is
+ * bounded by the existing repository policy and requires an explicit recovery
+ * operation until a lease column is introduced.
+ */
 class OutboxPublisher(
     private val outboxEventsRepository: OutboxEventsRepository,
-    private val messagePublisher: MessagePublisher
-) {
+    private val messagePublisher: MessagePublisher,
+    private val findEvents: suspend () -> List<OutboxEvents> = {
+        outboxEventsRepository.findUnprocessedEvents()
+    },
+    private val pollIntervalMillis: Long = 2_000,
+    private val wait: suspend (Long) -> Unit = { delay(it) }
+) : WorkerOutboxPublisher {
     private val logger = LoggerFactory.getLogger("OutboxPublisher")
+    private var job: Job? = null
+    private var stopped = false
 
-    fun publishMessage() {
-        val newEvents = outboxEventsRepository.findUnprocessedEvents()
+    @Synchronized
+    override fun start(scope: CoroutineScope): Job {
+        check(!stopped) { "OutboxPublisher is already stopped" }
+        return job ?: scope.launch {
+            while (isActive) {
+                try {
+                    publishMessage()
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    logger.error("Outbox polling iteration failed", exception)
+                }
+                wait(pollIntervalMillis)
+                yield()
+            }
+        }.also { job = it }
+    }
+
+    override suspend fun close() {
+        val currentJob = synchronized(this) {
+            stopped = true
+            job
+        }
+        currentJob?.cancel()
+        currentJob?.join()
+    }
+
+    suspend fun publishMessage() {
+        val newEvents = findEvents()
 
         for (event in newEvents) {
             when (outboxEventsRepository.tryStartPublishing(event.eventId)) {
@@ -47,6 +96,8 @@ class OutboxPublisher(
                 val rabbitEvent = OutboxEventMapper.toRabbitMqEvent(event)
                 val message = Json.encodeToString(rabbitEvent)
                 messagePublisher.publish(message)
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (exception: Exception) {
                 val errorMessage = exception.message
                     ?: exception::class.simpleName

@@ -13,6 +13,7 @@ import com.doduohor.domain.shared.FacilityId
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.Duration
 import java.time.format.DateTimeParseException
 
 class BookingService(private val bookingRepository: BookingRepository, private val facilityRepository: FacilityRepository) {
@@ -42,7 +43,10 @@ class BookingService(private val bookingRepository: BookingRepository, private v
             val startInstant = LocalDateTime.of(date, start).atZone(bookingZoneId).toInstant()
             val endInstant = LocalDateTime.of(date, end).atZone(bookingZoneId).toInstant()
 
-            BookingTimeInterval(startInstant, endInstant)
+            BookingTimeInterval(startInstant, endInstant).also { bookingInterval ->
+                val duration = Duration.between(bookingInterval.startTime, bookingInterval.endTime)
+                require(duration >= Duration.ofHours(1) && duration <= Duration.ofHours(12))
+            }
         } catch (e: DateTimeParseException) {
             return CreateBookingResult.InvalidTimeInterval
         } catch (e: IllegalArgumentException) {

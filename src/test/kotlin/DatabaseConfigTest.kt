@@ -4,8 +4,16 @@ import com.doduohor.infrastructure.database.postgres.DatabaseConfig
 import io.ktor.server.config.MapApplicationConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class DatabaseConfigTest {
+
+    @Test
+    fun `fromEnv reports blank required variable`() {
+        assertFailsWith<IllegalStateException> {
+            DatabaseConfig.fromEnv { name -> if (name == "DATABASE_PASSWORD") " " else "value" }
+        }
+    }
 
     @Test
     fun `reads database config from application config`() {

@@ -127,7 +127,7 @@ class BookingServiceTest {
                 FacilityActivateResult.AlreadyActive -> facility
                 FacilityActivateResult.InvalidStatus -> error("Test fixture facility cannot be activated")
             }
-            return facilityRepository.save(activated)
+            return requireNotNull(facilityRepository.save(activated))
         }
     }
 }

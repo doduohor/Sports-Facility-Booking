@@ -76,17 +76,19 @@ class PostgresIncidentRepository(
     override fun findByFacilityId(facilityId: FacilityId): List<Incident> = transaction(database) {
         IncidentTable.selectAll()
             .where { IncidentTable.facilityId eq facilityId.value }
+            .orderBy(IncidentTable.id)
             .map { row -> toIncident(row) }
     }
 
     override fun findByEquipmentId(equipmentId: EquipmentId): List<Incident> = transaction(database) {
         IncidentTable.selectAll()
             .where { IncidentTable.equipmentId eq equipmentId.value }
+            .orderBy(IncidentTable.id)
             .map { row -> toIncident(row) }
     }
 
     override fun findAll(): List<Incident> = transaction(database) {
-        IncidentTable.selectAll().map { row -> toIncident(row) }
+        IncidentTable.selectAll().orderBy(IncidentTable.id).map { row -> toIncident(row) }
     }
 
     private fun toIncident(row: ResultRow): Incident =

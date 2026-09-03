@@ -40,8 +40,13 @@ bin/
 graphify-out/
 .planning/
 .understand-anything
+.worktrees/
 .planning
 
 docs/*
+
+# C4 / Structurizr diagrams and their supporting files
+docs/architecture/
 .superpowers/*
 AGENTS.md
+analize_docker/*

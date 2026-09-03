@@ -30,7 +30,7 @@ private val testPersistenceModule = module {
     single<EquipmentRepository> { InMemoryEquipmentRepository() }
     single<MeasurementRepository> { InMemoryMeasurementRepository(get()) }
     single<IncidentRepository> { InMemoryIncidentRepository(get()) }
-    single<OutboxEventsRepository> { InMemoryOutboxEventsRepository() }
+    single<OutboxEventsRepository> { InMemoryOutboxEventsRepository(get()) }
     single<MonitoringTransaction> {
         object : MonitoringTransaction {
             override fun <T> execute(block: () -> T): T = block()
