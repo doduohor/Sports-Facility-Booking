@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 PROJECT="sports-booking-e2e"
+export TELEGRAM_NOTIFICATION_MODE=stub
 COMPOSE=(docker compose --env-file .env.example -p "$PROJECT")
 API_PORT="${API_PORT:-$(sed -n 's/^API_PORT=//p' .env.example | head -n 1)}"
 API_PORT="${API_PORT:-8080}"
@@ -74,6 +75,16 @@ while (( SECONDS < deadline )); do
         continue
     fi
 
+    incident_event_id=$("${COMPOSE[@]}" exec -T postgres psql \
+        -U "${POSTGRES_USER:-sports}" \
+        -d "${POSTGRES_DB:-sports_facility_booking}" \
+        -tAc "SELECT event_id::text FROM outbox_events WHERE event_type = 'INCIDENT_CREATED' ORDER BY id DESC LIMIT 1;")
+
+    if [[ -z "$incident_event_id" ]]; then
+        sleep 2
+        continue
+    fi
+
     published=$("${COMPOSE[@]}" exec -T postgres psql \
         -U "${POSTGRES_USER:-sports}" \
         -d "${POSTGRES_DB:-sports_facility_booking}" \
@@ -85,11 +96,19 @@ while (( SECONDS < deadline )); do
         --authenticationDatabase admin \
         "${MONGO_DATABASE:-sports_facility_booking}" \
         --eval "db.event_history.countDocuments({eventId: '${event_id}', eventType: 'MEASUREMENT_CREATED', status: 'PROCESSED'})")
+    incident_history=$("${COMPOSE[@]}" exec -T mongo mongosh \
+        --quiet \
+        --username "${MONGO_ROOT_USERNAME:-mongo_admin}" \
+        --password "${MONGO_ROOT_PASSWORD:-mongo_admin}" \
+        --authenticationDatabase admin \
+        "${MONGO_DATABASE:-sports_facility_booking}" \
+        --eval "db.event_history.countDocuments({eventId: '${incident_event_id}', eventType: 'INCIDENT_CREATED', status: 'PROCESSED'})")
     queue=$("${COMPOSE[@]}" exec -T rabbit rabbitmqctl list_queues name messages \
         | awk '$1 == "sports.measurements" { print $2 }')
 
     if [[ "$published" =~ ^[[:space:]]*1[[:space:]]*$ ]] \
         && [[ "$history" =~ ^[[:space:]]*1[[:space:]]*$ ]] \
+        && [[ "$incident_history" =~ ^[[:space:]]*1[[:space:]]*$ ]] \
         && [[ "$queue" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]]; then
         message=$("${COMPOSE[@]}" exec -T postgres psql \
             -U "${POSTGRES_USER:-sports}" \

@@ -11,8 +11,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run Gradle tests
+        run: ./gradlew test --no-daemon --console=plain
+
       - name: Run Docker smoke test
         run: bash scripts/docker-smoke.sh
 
-      - name: Repeat Docker smoke test
-        run: bash scripts/docker-smoke.sh
+      - name: Run Docker end-to-end test
+        run: bash scripts/docker-e2e.sh

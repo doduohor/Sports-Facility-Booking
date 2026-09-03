@@ -81,12 +81,12 @@ PostgreSQL outbox ──► Worker/OutboxPublisher ──► RabbitMQ exchange/q
 
 | Тип | Единица | Допустимый диапазон |
 | --- | --- | --- |
-| `TEMPERATURE` | `CELSIUS` | `[-50, 100)` |
-| `HUMIDITY` | `PERCENT` | `[0, 100)` |
-| `CO2` | `PPM` | `[0, 10000)` |
-| `SMOKE` | `PERCENT` | `[0, 100)` |
+| `TEMPERATURE` | `CELSIUS` | `[-50, 100]` |
+| `HUMIDITY` | `PERCENT` | `[0, 100]` |
+| `CO2` | `PPM` | `[0, 10000]` |
+| `SMOKE` | `PERCENT` | `[0, 100]` |
 
-Диапазоны полуоткрытые: нижняя граница включается, верхняя — нет. `NaN` и бесконечности отклоняются.
+Обе границы диапазона включаются. `NaN` и бесконечности отклоняются.
 
 ### Инциденты
 
@@ -182,11 +182,11 @@ MongoDB используется для `event_history` и не хранит д�
 
 Требования: JDK 21; Docker Engine и Docker Compose v2 для полного стека; `bash`, `curl`, `jq` для проверочных скриптов.
 
+Для запуска тестов на хосте нужен JDK 21. Команды `run` и `runWorker` предназначены для разработки и требуют доступных PostgreSQL, MongoDB и RabbitMQ, а worker также требует переменные Telegram.
+
 ```bash
 ./gradlew test
 ./gradlew build
-./gradlew run
-./gradlew runWorker
 ```
 
 Для полного окружения:
@@ -206,13 +206,15 @@ bash scripts/docker-smoke.sh
 bash scripts/docker-e2e.sh
 ```
 
-Smoke проверяет healthcheck и сборку образа. E2E проверяет цепочку PostgreSQL outbox → RabbitMQ → MongoDB и защиту от повторной обработки.
+Smoke проверяет healthcheck и сборку образа. E2E проверяет цепочку PostgreSQL outbox → RabbitMQ → MongoDB, обработку инцидента и защиту от повторной обработки. E2E включает локальную заглушку Telegram и не обращается к внешнему Telegram API.
 
 ## Конфигурация и безопасность
 
 Основные переменные: `DATABASE_URL`, `DATABASE_USER`, `DATABASE_PASSWORD`; `RABBIT_HOST`, `RABBIT_PORT`, `RABBIT_USER`, `RABBIT_PASSWORD`, `RABBIT_EXCHANGE`, `RABBIT_QUEUE`, `RABBIT_ROUTING_KEY` и DLQ-параметры; `MONGO_HOST`, `MONGO_PORT`, `MONGO_USERNAME`, `MONGO_PASSWORD`, `MONGO_DATABASE`; `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`; `API_PORT`.
 
 Значения по умолчанию находятся в `application.conf`, Docker-значения — в `.env.example` и `compose.yaml`. Реальные пароли и токены нельзя коммитить; Basic Auth следует заменить на production-механизм и вынести внешний TLS на ingress.
+
+`TELEGRAM_NOTIFICATION_MODE=telegram` включает отправку через Telegram API. Режим `stub` предназначен только для автоматических E2E-проверок: он подтверждает обработку уведомления без сетевого запроса.
 
 ## Тестирование
 
@@ -368,7 +370,7 @@ bash scripts/docker-smoke.sh
 bash scripts/docker-e2e.sh
 ```
 
-`./gradlew test` запускает модульные, контрактные и интеграционные тесты на Testcontainers и поэтому требует доступа к Docker daemon. Скрипты `docker-smoke.sh` и `docker-e2e.sh` используют отдельные имена Compose-проектов, выводят логи при ошибке и удаляют только созданные ими контейнеры и volumes. E2E-сценарий всегда читает `.env.example`, поэтому не использует секреты из локального `.env`.
+`./gradlew test` запускает модульные, контрактные и интеграционные тесты на Testcontainers и поэтому требует доступа к Docker daemon. Скрипты `docker-smoke.sh` и `docker-e2e.sh` используют отдельные имена Compose-проектов, выводят логи при ошибке и удаляют только созданные ими контейнеры и volumes. E2E-сценарий использует `.env.example` и принудительно включает режим `TELEGRAM_NOTIFICATION_MODE=stub`, поэтому не использует секреты и внешний Telegram API. В GitHub Actions выполняются Gradle-тесты, smoke и E2E.
 
 ### Остановка и очистка
 
