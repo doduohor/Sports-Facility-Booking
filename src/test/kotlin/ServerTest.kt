@@ -21,6 +21,21 @@ import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
 import com.doduohor.api.dto.ErrorResponse
+import com.doduohor.api.mapper.ApiError
+import com.doduohor.api.mapper.respondApiError
+import com.doduohor.domain.model.Measurement
+import com.doduohor.domain.model.MeasurementReading
+import com.doduohor.domain.model.MeasurementType
+import com.doduohor.domain.model.MeasurementUnit
+import com.doduohor.domain.shared.EquipmentId
+import com.doduohor.domain.shared.MeasurementId
+import com.doduohor.service.CreateMeasurementResult
+import com.doduohor.service.IncidentServiceResult
+import com.doduohor.service.MonitoringServiceResult
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import java.time.Instant
+import org.koin.ktor.ext.inject
 
 class ServerTest {
     private companion object {
@@ -54,6 +69,160 @@ class ServerTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertTrue(body.contains("UP"))
+    }
+
+    @Test
+    fun `api error responder preserves status and exact error response`() = testApplication {
+        application {
+            configureSerialization()
+            routing {
+                get("/test-api-error") {
+                    call.respondApiError(
+                        ApiError(
+                            HttpStatusCode.Conflict,
+                            ErrorResponse(409, "alreadyActive", "The object is already active")
+                        )
+                    )
+                }
+            }
+        }
+
+        val response = client.get("/test-api-error")
+
+        assertExactJsonError(
+            response,
+            HttpStatusCode.Conflict,
+            "shared API error responder",
+            ErrorResponse(409, "alreadyActive", "The object is already active")
+        )
+    }
+
+    @Test
+    fun `measurement monitoring internal errors keep exact API contracts`() = testApplication {
+        environment {
+            config = MapApplicationConfig(
+                "security.basic.username" to TEST_USERNAME,
+                "security.basic.password" to TEST_PASSWORD,
+                "database.enabled" to "false",
+                "rabbitmq.host" to "localhost",
+                "rabbitmq.port" to "5672",
+                "rabbitmq.username" to "guest",
+                "rabbitmq.password" to "guest",
+                "rabbitmq.exchange" to "sports.events",
+                "rabbitmq.queue" to "sports.measurements",
+                "rabbitmq.routingKey" to "measurement.created",
+                "rabbitmq.deadLetterExchange" to "sports.events.dlq",
+                "rabbitmq.deadLetterQueue" to "sports.measurements.dlq",
+                "rabbitmq.deadLetterRoutingKey" to "measurement.created.dlq"
+            )
+        }
+        application {
+            configureTestKoin(FakeMessagePublisher())
+            configureSerialization()
+            configureSecurity()
+            val measurementService by inject<com.doduohor.service.MeasurementService>()
+            routing {
+                measurementRoutes(
+                    measurementService,
+                    processMeasurement = { _, _, _, value ->
+                        when (value) {
+                            1.0 -> MonitoringServiceResult.MeasurementCreateError(
+                                CreateMeasurementResult.NotSupportedEquipmentType
+                            )
+                            2.0 -> MonitoringServiceResult.MeasurementCreateError(
+                                CreateMeasurementResult.MeasurementRangeNotConfigured
+                            )
+                            3.0 -> MonitoringServiceResult.EquipmentContextLost(testMeasurement())
+                            4.0 -> MonitoringServiceResult.IncidentCreateError(
+                                testMeasurement(),
+                                IncidentServiceResult.InvalidValue
+                            )
+                            else -> MonitoringServiceResult.OutboxPersistenceError("ignored")
+                        }
+                    }
+                )
+            }
+        }
+
+        val cases = listOf(
+            1.0 to ErrorResponse(500, "notSupportedEquipmentType", "Measurement rules are not configured for this equipment type"),
+            2.0 to ErrorResponse(500, "measurementRangeNotConfigured", "Measurement value range is not configured"),
+            3.0 to ErrorResponse(500, "equipmentContextLost", "Equipment context was not found after measurement creation"),
+            4.0 to ErrorResponse(500, "incidentCreateError", "Measurement was created, but incident creation failed"),
+            5.0 to ErrorResponse(500, "outboxPersistenceError", "Measurement event could not be stored")
+        )
+        cases.forEach { (value, expected) ->
+            assertExactJsonError(
+                client.post("/api/measurements") {
+                    basicAuth(TEST_USERNAME, TEST_PASSWORD)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"equipmentId":1,"type":"TEMPERATURE","unit":"CELSIUS","value":$value}""")
+                },
+                HttpStatusCode.InternalServerError,
+                "monitoring $value",
+                expected
+            )
+        }
+    }
+
+    @Test
+    fun `facility booking and equipment service errors keep exact API contracts`() = testApplication {
+        configureTestApplication()
+
+        assertExactJsonError(
+            createFacility("   ", "POOL"),
+            HttpStatusCode.BadRequest,
+            "facility 400",
+            ErrorResponse(400, "invalidName", "Facility name must not be blank")
+        )
+        assertExactJsonError(
+            activateFacility(999999),
+            HttpStatusCode.NotFound,
+            "facility 404",
+            ErrorResponse(404, "Error", "Not Found")
+        )
+
+        assertExactJsonError(
+            createBooking(facilityId = 0, customerId = 900),
+            HttpStatusCode.BadRequest,
+            "booking 400",
+            ErrorResponse(400, "invalidFacilityId", "The Facility ID must be positive.")
+        )
+        assertExactJsonError(
+            createBooking(facilityId = 999999, customerId = 900),
+            HttpStatusCode.NotFound,
+            "booking 404",
+            ErrorResponse(404, "notFindFacilityId", "The specified facilityId was not found.")
+        )
+
+        assertExactJsonError(
+            createEquipment(facilityId = 0, name = "Ventilation", type = "VENTILATION"),
+            HttpStatusCode.BadRequest,
+            "equipment 400",
+            ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
+        )
+        assertExactJsonError(
+            createEquipment(facilityId = 99, name = "Ventilation", type = "VENTILATION"),
+            HttpStatusCode.NotFound,
+            "equipment 404",
+            ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
+        )
+
+        val inactiveFacilityId = extractLongField(createFacility("Inactive Pool", "POOL").bodyAsText(), "id")
+        val activeFacilityId = extractLongField(createFacility("Active Pool", "POOL").bodyAsText(), "id")
+        activateFacility(activeFacilityId)
+        assertExactJsonError(
+            activateFacility(activeFacilityId),
+            HttpStatusCode.Conflict,
+            "facility 409",
+            ErrorResponse(409, "alreadyActive", "The object is already active")
+        )
+        assertExactJsonError(
+            createBooking(facilityId = inactiveFacilityId, customerId = 900),
+            HttpStatusCode.Conflict,
+            "booking 409",
+            ErrorResponse(409, "invalidStatusFacilityId", "The status of this facility does not allow bookings to be created.")
+        )
     }
 
     @Test
@@ -867,22 +1036,24 @@ class ServerTest {
     fun `create measurement with invalid equipment id returns bad request`() = testApplication {
         configureTestApplication()
 
-        val response = createMeasurement(equipmentId = 0, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(body.contains("invalidEquipmentId"))
+        assertExactJsonError(
+            createMeasurement(equipmentId = 0, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5),
+            HttpStatusCode.BadRequest,
+            "measurement invalid equipment",
+            ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
+        )
     }
 
     @Test
     fun `create measurement with missing equipment returns not found`() = testApplication {
         configureTestApplication()
 
-        val response = createMeasurement(equipmentId = 999999, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5)
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.NotFound, response.status)
-        assertTrue(body.contains("notFindEquipmentId"))
+        assertExactJsonError(
+            createMeasurement(equipmentId = 999999, type = "TEMPERATURE", unit = "CELSIUS", value = 24.5),
+            HttpStatusCode.NotFound,
+            "measurement missing equipment",
+            ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
+        )
     }
 
     @Test
@@ -934,11 +1105,12 @@ class ServerTest {
         val equipment = createEquipment(facilityId = 1, name = "Main ventilation", type = "VENTILATION")
         val equipmentId = extractLongField(equipment.bodyAsText(), "id")
 
-        val response = createMeasurement(equipmentId, type = "TEMPERATURE", unit = "CELSIUS", value = 200.0)
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(body.contains("invalidValue"))
+        assertExactJsonError(
+            createMeasurement(equipmentId, type = "TEMPERATURE", unit = "CELSIUS", value = 200.0),
+            HttpStatusCode.BadRequest,
+            "measurement invalid value",
+            ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
+        )
     }
 
     @Test
@@ -948,11 +1120,12 @@ class ServerTest {
         val equipment = createEquipment(facilityId = 1, name = "Pool water supply", type = "WATER_SUPPLY")
         val equipmentId = extractLongField(equipment.bodyAsText(), "id")
 
-        val response = createMeasurement(equipmentId, type = "CO2", unit = "PPM", value = 450.0)
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.Conflict, response.status)
-        assertTrue(body.contains("invalidMeasurementType"))
+        assertExactJsonError(
+            createMeasurement(equipmentId, type = "CO2", unit = "PPM", value = 450.0),
+            HttpStatusCode.Conflict,
+            "measurement unsupported type",
+            ErrorResponse(409, "invalidMeasurementType", "This measurement type is not supported by the specified equipment")
+        )
     }
 
     @Test
@@ -1118,40 +1291,42 @@ class ServerTest {
     fun `create incident with invalid facility id returns bad request`() = testApplication {
         configureTestApplication()
 
-        val response = createIncident(
-            facilityId = 0,
-            equipmentId = 200,
-            measurementId = 400,
-            type = "SMOKE_DETECTED",
-            severity = "CRITICAL",
-            measurementType = "SMOKE",
-            measurementUnit = "PERCENT",
-            value = 80.0
+        assertExactJsonError(
+            createIncident(
+                facilityId = 0,
+                equipmentId = 200,
+                measurementId = 400,
+                type = "SMOKE_DETECTED",
+                severity = "CRITICAL",
+                measurementType = "SMOKE",
+                measurementUnit = "PERCENT",
+                value = 80.0
+            ),
+            HttpStatusCode.BadRequest,
+            "incident invalid facility",
+            ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
         )
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(body.contains("invalidFacilityId"))
     }
 
     @Test
     fun `create incident with missing facility returns not found`() = testApplication {
         configureTestApplication()
 
-        val response = createIncident(
-            facilityId = 999999,
-            equipmentId = 200,
-            measurementId = 400,
-            type = "SMOKE_DETECTED",
-            severity = "CRITICAL",
-            measurementType = "SMOKE",
-            measurementUnit = "PERCENT",
-            value = 80.0
+        assertExactJsonError(
+            createIncident(
+                facilityId = 999999,
+                equipmentId = 200,
+                measurementId = 400,
+                type = "SMOKE_DETECTED",
+                severity = "CRITICAL",
+                measurementType = "SMOKE",
+                measurementUnit = "PERCENT",
+                value = 80.0
+            ),
+            HttpStatusCode.NotFound,
+            "incident missing facility",
+            ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
         )
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.NotFound, response.status)
-        assertTrue(body.contains("notFindFacilityId"))
     }
 
     @Test
@@ -1162,20 +1337,21 @@ class ServerTest {
         val equipment = createEquipment(facilityId = 2, name = "Gym ventilation", type = "VENTILATION")
         val equipmentId = extractLongField(equipment.bodyAsText(), "id")
 
-        val response = createIncident(
-            facilityId = 1,
-            equipmentId = equipmentId,
-            measurementId = 400,
-            type = "HIGH_CO2",
-            severity = "HIGH",
-            measurementType = "CO2",
-            measurementUnit = "PPM",
-            value = 1200.0
+        assertExactJsonError(
+            createIncident(
+                facilityId = 1,
+                equipmentId = equipmentId,
+                measurementId = 400,
+                type = "HIGH_CO2",
+                severity = "HIGH",
+                measurementType = "CO2",
+                measurementUnit = "PPM",
+                value = 1200.0
+            ),
+            HttpStatusCode.Conflict,
+            "incident equipment conflict",
+            ErrorResponse(409, "equipmentDoesNotBelongToFacility", "The equipment does not belong to the specified facility")
         )
-        val body = response.bodyAsText()
-
-        assertEquals(HttpStatusCode.Conflict, response.status)
-        assertTrue(body.contains("equipmentDoesNotBelongToFacility"))
     }
 
     @Test
@@ -1404,6 +1580,13 @@ class ServerTest {
         return pattern.find(body)?.groupValues?.get(1)?.toLong()
             ?: error("Response does not contain numeric field '$fieldName': $body")
     }
+
+    private fun testMeasurement() = Measurement.create(
+        MeasurementId(1),
+        EquipmentId(1),
+        MeasurementReading(MeasurementType.TEMPERATURE, MeasurementUnit.CELSIUS, 20.0),
+        Instant.EPOCH
+    )
 
     private data class WriteRoute(
         val path: String,

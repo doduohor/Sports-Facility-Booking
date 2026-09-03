@@ -13,12 +13,14 @@ import com.doduohor.api.dto.MeasurementCreate
 import com.doduohor.api.dto.MeasurementsResponse
 import com.doduohor.api.dto.SuccessResponse
 import com.doduohor.api.mapper.ApiInputParsers
+import com.doduohor.api.mapper.ApiErrorMapper
+import com.doduohor.api.mapper.respondApiError
 import com.doduohor.api.mapper.toResponse
 import com.doduohor.domain.shared.ParsingResult
-import com.doduohor.domain.model.MeasurementType
-import com.doduohor.domain.model.MeasurementUnit
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.IncidentSeverity
+import com.doduohor.domain.model.MeasurementType
+import com.doduohor.domain.model.MeasurementUnit
 import com.doduohor.domain.shared.CustomerId
 import com.doduohor.events.EventPublisher
 import com.doduohor.events.eventStreamRoutes
@@ -40,6 +42,7 @@ import com.doduohor.service.IncidentServiceResult
 import com.doduohor.service.MeasurementService
 import com.doduohor.service.MonitoringService
 import com.doduohor.service.MonitoringServiceResult
+import com.doduohor.service.ProcessMeasurementCommand
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -84,6 +87,10 @@ private suspend fun ApplicationCall.requireJsonContentType(): Boolean {
     return false
 }
 
+internal suspend fun ApplicationCall.respondMonitoringResult(result: MonitoringServiceResult) {
+    respondApiError(ApiErrorMapper.map(result) ?: error("Monitoring result is not an API error"))
+}
+
 fun Route.healthRoutes() {
     get("/") {
         call.respond(HttpStatusCode.OK, SuccessResponse("Result", "Hello, World!"))
@@ -111,10 +118,7 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
                         name = request.name,
                         type = result.value
                     )){
-                        CreateFacilityResult.InvalidName -> call.respond(
-                            HttpStatusCode.BadRequest,
-                            ErrorResponse(400, "invalidName", "Facility name must not be blank")
-                        )
+                        CreateFacilityResult.InvalidName -> call.respondApiError(ApiErrorMapper.map(facility)!!)
                         is CreateFacilityResult.Success -> call.respond(
                             HttpStatusCode.Created,
                             facility.facility.toResponse()
@@ -188,20 +192,9 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
             }
             val activateFacility = facilityService.activateFacility(facilityId)
             when (activateFacility) {
-                ActivateFacilityResult.InvalidStatus -> call.respond(
-                    HttpStatusCode.Conflict,
-                    ErrorResponse(409, "invalidStatus", "The object cannot be activated from its current status")
-                )
-
-                ActivateFacilityResult.AlreadyActive -> call.respond(
-                    HttpStatusCode.Conflict,
-                    ErrorResponse(409, "alreadyActive", "The object is already active")
-                )
-
-                ActivateFacilityResult.NotFound -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorResponse(404, "Error", "Not Found")
-                )
+                ActivateFacilityResult.InvalidStatus,
+                ActivateFacilityResult.AlreadyActive,
+                ActivateFacilityResult.NotFound -> call.respondApiError(ApiErrorMapper.map(activateFacility)!!)
 
                 is ActivateFacilityResult.Success -> call.respond(
                     HttpStatusCode.OK,
@@ -227,43 +220,12 @@ fun Route.bookingRoutes(bookingService: BookingService) {
             )
 
             when (booking) {
-                CreateBookingResult.InvalidFacilityId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidFacilityId", "The Facility ID must be positive.")
-                )
-
-                CreateBookingResult.InvalidCustomerId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidCustomerId", "Customer ID is not allowed to create bookings.")
-                )
-
-                CreateBookingResult.InvalidTimeInterval -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidTimeInterval", "The time interval must be between 1 and 12 hours.")
-                )
-
-                CreateBookingResult.NotFindFacilityId -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorResponse(404, "notFindFacilityId", "The specified facilityId was not found.")
-                )
-
-                CreateBookingResult.InvalidStatusFacilityId -> call.respond(
-                    HttpStatusCode.Conflict,
-                    ErrorResponse(
-                        409,
-                        "invalidStatusFacilityId",
-                        "The status of this facility does not allow bookings to be created."
-                    )
-                )
-
-                CreateBookingResult.UnavailableRangeTimeLimit -> call.respond(
-                    HttpStatusCode.Conflict,
-                    ErrorResponse(
-                        409,
-                        "unavailableRangeTimeLimit",
-                        "The specified time slot is partially or fully booked."
-                    )
-                )
+                CreateBookingResult.InvalidFacilityId,
+                CreateBookingResult.InvalidCustomerId,
+                CreateBookingResult.InvalidTimeInterval,
+                CreateBookingResult.NotFindFacilityId,
+                CreateBookingResult.InvalidStatusFacilityId,
+                CreateBookingResult.UnavailableRangeTimeLimit -> call.respondApiError(ApiErrorMapper.map(booking)!!)
 
                 is CreateBookingResult.Success -> call.respond(
                     HttpStatusCode.Created,
@@ -314,15 +276,8 @@ fun Route.bookingRoutes(bookingService: BookingService) {
 
         val bookings = bookingService.findByFacilityId(facilityId)
         when(bookings){
-            FindByFacilityResult.InvalidFacilityId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
-            )
-
-            FindByFacilityResult.NotFindFacilityId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-            )
+            FindByFacilityResult.InvalidFacilityId,
+            FindByFacilityResult.NotFindFacilityId -> call.respondApiError(ApiErrorMapper.map(bookings)!!)
 
             is FindByFacilityResult.Success -> call.respond(
                 HttpStatusCode.OK,
@@ -343,20 +298,9 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
                 )
                 is ParsingResult.Success -> {
                     when(val equipment = equipmentService.create(request.facilityId, request.name, parseTypeResult.value)){
-                        CreateEquipmentResult.InvalidFacilityId -> call.respond(
-                            HttpStatusCode.BadRequest,
-                            ErrorResponse(400, "invalidFacilityId", "You entered an incorrect facilityId")
-                        )
-
-                        CreateEquipmentResult.NotFindFacilityId -> call.respond(
-                            HttpStatusCode.NotFound,
-                            ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-                        )
-
-                        CreateEquipmentResult.InvalidName -> call.respond(
-                            HttpStatusCode.BadRequest,
-                            ErrorResponse(400, "invalidName", "An incorrect name has been specified")
-                        )
+                        CreateEquipmentResult.InvalidFacilityId,
+                        CreateEquipmentResult.NotFindFacilityId,
+                        CreateEquipmentResult.InvalidName -> call.respondApiError(ApiErrorMapper.map(equipment)!!)
 
                         is CreateEquipmentResult.Success -> call.respond(
                             HttpStatusCode.Created,
@@ -409,15 +353,8 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
 
         val equipments = equipmentService.findByFacilityId(facilityId)
         when(equipments){
-            FindEquipmentsByFacilityIdResult.InvalidFacilityId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
-            )
-
-            FindEquipmentsByFacilityIdResult.NotFindFacilityId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-            )
+            FindEquipmentsByFacilityIdResult.InvalidFacilityId,
+            FindEquipmentsByFacilityIdResult.NotFindFacilityId -> call.respondApiError(ApiErrorMapper.map(equipments)!!)
 
             is FindEquipmentsByFacilityIdResult.Success -> call.respond(
                 HttpStatusCode.OK,
@@ -427,7 +364,22 @@ fun Route.equipmentRoutes(equipmentService: EquipmentService){
     }
 }
 
-fun Route.measurementRoutes(measurementService: MeasurementService, monitoringService: MonitoringService){
+fun Route.measurementRoutes(measurementService: MeasurementService, monitoringService: MonitoringService) =
+    measurementRoutes(measurementService) { equipmentId, type, unit, value ->
+        monitoringService.processMeasurement(
+            ProcessMeasurementCommand(
+                equipmentId = equipmentId,
+                type = type,
+                unit = unit,
+                value = value
+            )
+        )
+    }
+
+internal fun Route.measurementRoutes(
+    measurementService: MeasurementService,
+    processMeasurement: suspend (Long, MeasurementType, MeasurementUnit, Double) -> MonitoringServiceResult
+){
     authenticate("auth-basic") {
         post("/api/measurements") {
             if (!call.requireJsonContentType()) return@post
@@ -440,7 +392,7 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
                 )
                 return@post
             }
-            val measurementType = (parseTypeResult as ParsingResult.Success<MeasurementType>).value
+            val measurementType = (parseTypeResult as ParsingResult.Success).value
             val parseUnitResult = ApiInputParsers.parseMeasurementUnit(request.unit)
             if (parseUnitResult is ParsingResult.Error) {
                 call.respond(
@@ -449,88 +401,32 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
                 )
                 return@post
             }
-            val measurementUnit = (parseUnitResult as ParsingResult.Success<MeasurementUnit>).value
-            val monitoringResult =
-                monitoringService.processMeasurement(request.equipmentId, measurementType, measurementUnit, request.value)
+            val measurementUnit = (parseUnitResult as ParsingResult.Success).value
+            val monitoringResult = processMeasurement(
+                request.equipmentId,
+                measurementType,
+                measurementUnit,
+                request.value
+            )
 
             when (monitoringResult) {
-                is MonitoringServiceResult.MeasurementCreateError -> when (monitoringResult.measurementResult) {
-                    CreateMeasurementResult.InvalidEquipmentId -> call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
-                    )
-
-                    CreateMeasurementResult.NotFindEquipmentId -> call.respond(
-                        HttpStatusCode.NotFound,
-                        ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
-                    )
-
-                    CreateMeasurementResult.InvalidMappingTypeAndUnit -> call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(
-                            400,
-                            "invalidMappingTypeAndUnit",
-                            "The measurement type does not match the specified unit"
+                is MonitoringServiceResult.MeasurementCreateError -> {
+                    val error = ApiErrorMapper.map(monitoringResult.measurementResult)
+                    if (error != null) {
+                        call.respondApiError(error)
+                    } else {
+                        call.respond(
+                            HttpStatusCode.Created,
+                            (monitoringResult.measurementResult as CreateMeasurementResult.Success).measurement.toResponse()
                         )
-                    )
-
-                    CreateMeasurementResult.NotSupportedEquipmentType -> call.respond(
-                        HttpStatusCode.InternalServerError,
-                        ErrorResponse(
-                            500,
-                            "notSupportedEquipmentType",
-                            "Measurement rules are not configured for this equipment type"
-                        )
-                    )
-
-                    CreateMeasurementResult.InvalidMeasurementType -> call.respond(
-                        HttpStatusCode.Conflict,
-                        ErrorResponse(
-                            409,
-                            "invalidMeasurementType",
-                            "This measurement type is not supported by the specified equipment"
-                        )
-                    )
-
-                    CreateMeasurementResult.InvalidValue -> call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorResponse(400, "invalidValue", "The measurement value is outside the allowed range")
-                    )
-
-                    CreateMeasurementResult.MeasurementRangeNotConfigured -> call.respond(
-                        HttpStatusCode.InternalServerError,
-                        ErrorResponse(500, "measurementRangeNotConfigured", "Measurement value range is not configured")
-                    )
-
-                    is CreateMeasurementResult.Success -> call.respond(
-                        HttpStatusCode.Created,
-                        monitoringResult.measurementResult.measurement.toResponse()
-                    )
-
-                    CreateMeasurementResult.NotFindMeasurementType -> call.respond(
-                        HttpStatusCode.NotFound,
-                        ErrorResponse(404, "notFindMeasurementType", "The specified Measurement Type does not exist")
-                    )
+                    }
                 }
 
-                is MonitoringServiceResult.EquipmentContextLost -> call.respond(
-                    HttpStatusCode.InternalServerError,
-                    ErrorResponse(
-                        500,
-                        "equipmentContextLost",
-                        "Equipment context was not found after measurement creation"
-                    )
-                )
+                is MonitoringServiceResult.EquipmentContextLost -> call.respondMonitoringResult(monitoringResult)
 
-                is MonitoringServiceResult.IncidentCreateError -> call.respond(
-                    HttpStatusCode.InternalServerError,
-                    ErrorResponse(500, "incidentCreateError", "Measurement was created, but incident creation failed")
-                )
+                is MonitoringServiceResult.IncidentCreateError -> call.respondMonitoringResult(monitoringResult)
 
-                is MonitoringServiceResult.OutboxPersistenceError -> call.respond(
-                    HttpStatusCode.InternalServerError,
-                    ErrorResponse(500, "outboxPersistenceError", "Measurement event could not be stored")
-                )
+                is MonitoringServiceResult.OutboxPersistenceError -> call.respondMonitoringResult(monitoringResult)
 
                 is MonitoringServiceResult.SuccessWithIncident -> call.respond(
                     HttpStatusCode.Created,
@@ -584,15 +480,8 @@ fun Route.measurementRoutes(measurementService: MeasurementService, monitoringSe
 
         val measurements = measurementService.findByEquipmentId(equipmentId)
         when(measurements){
-            FindEquipmentIdResult.InvalidEquipmentId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
-            )
-
-            FindEquipmentIdResult.NotFindEquipmentId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
-            )
+            FindEquipmentIdResult.InvalidEquipmentId,
+            FindEquipmentIdResult.NotFindEquipmentId -> call.respondApiError(ApiErrorMapper.map(measurements)!!)
 
             is FindEquipmentIdResult.Success -> call.respond(
                 HttpStatusCode.OK,
@@ -651,39 +540,14 @@ fun Route.incidentRoutes(incidentService: IncidentService){
             )
 
             when (incident) {
-                IncidentServiceResult.InvalidFacilityId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
-                )
+                IncidentServiceResult.InvalidFacilityId,
+                IncidentServiceResult.InvalidEquipmentId,
+                IncidentServiceResult.InvalidMeasurementId,
+                IncidentServiceResult.NotFindFacilityId,
+                IncidentServiceResult.NotFindEquipmentId -> call.respondApiError(ApiErrorMapper.map(incident)!!)
 
-                IncidentServiceResult.InvalidEquipmentId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
-                )
-
-                IncidentServiceResult.InvalidMeasurementId -> call.respond(
-                    HttpStatusCode.BadRequest,
-                    ErrorResponse(400, "invalidMeasurementId", "An incorrect Measurement ID has been specified")
-                )
-
-                IncidentServiceResult.NotFindFacilityId -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-                )
-
-                IncidentServiceResult.NotFindEquipmentId -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
-                )
-
-                IncidentServiceResult.EquipmentDoesNotBelongToFacility -> call.respond(
-                    HttpStatusCode.Conflict,
-                    ErrorResponse(
-                        409,
-                        "equipmentDoesNotBelongToFacility",
-                        "The equipment does not belong to the specified facility"
-                    )
-                )
+                IncidentServiceResult.EquipmentDoesNotBelongToFacility,
+                IncidentServiceResult.InvalidValue -> call.respondApiError(ApiErrorMapper.map(incident)!!)
 
                 is IncidentServiceResult.Success -> call.respond(
                     HttpStatusCode.Created,
@@ -732,15 +596,8 @@ fun Route.incidentRoutes(incidentService: IncidentService){
 
         val incidents = incidentService.findByFacilityId(facilityId)
         when(incidents){
-            FindIncidentsByFacilityIdResult.InvalidFacilityId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidFacilityId", "An incorrect Facility ID has been specified")
-            )
-
-            FindIncidentsByFacilityIdResult.NotFindFacilityId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindFacilityId", "The specified Facility ID does not exist")
-            )
+            FindIncidentsByFacilityIdResult.InvalidFacilityId,
+            FindIncidentsByFacilityIdResult.NotFindFacilityId -> call.respondApiError(ApiErrorMapper.map(incidents)!!)
 
             is FindIncidentsByFacilityIdResult.Success -> call.respond(
                 HttpStatusCode.OK,
@@ -761,15 +618,8 @@ fun Route.incidentRoutes(incidentService: IncidentService){
 
         val incidents = incidentService.findByEquipmentId(equipmentId)
         when(incidents){
-            FindIncidentsByEquipmentIdResult.InvalidEquipmentId -> call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorResponse(400, "invalidEquipmentId", "An incorrect Equipment ID has been specified")
-            )
-
-            FindIncidentsByEquipmentIdResult.NotFindEquipmentId -> call.respond(
-                HttpStatusCode.NotFound,
-                ErrorResponse(404, "notFindEquipmentId", "The specified Equipment ID does not exist")
-            )
+            FindIncidentsByEquipmentIdResult.InvalidEquipmentId,
+            FindIncidentsByEquipmentIdResult.NotFindEquipmentId -> call.respondApiError(ApiErrorMapper.map(incidents)!!)
 
             is FindIncidentsByEquipmentIdResult.Success -> call.respond(
                 HttpStatusCode.OK,

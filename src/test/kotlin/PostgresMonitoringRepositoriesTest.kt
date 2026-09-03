@@ -261,7 +261,7 @@ class PostgresMonitoringRepositoriesTest {
             )
         )
 
-        val createdIncident = incidentRepository.create(
+        val createdIncident = assertIs<com.doduohor.domain.model.IncidentCreationResult.Success<com.doduohor.domain.model.Incident>>(incidentRepository.create(
             facilityId = facility.id,
             equipmentId = equipment.id,
             measurementId = measurement.id,
@@ -270,7 +270,7 @@ class PostgresMonitoringRepositoriesTest {
             measurementType = MeasurementType.SMOKE,
             measurementUnit = MeasurementUnit.PERCENT,
             value = 12.0
-        )
+        )).value
 
         assertTrue(createdIncident.id.value > 0)
         assertEquals(facility.id, createdIncident.facilityId)
@@ -311,6 +311,34 @@ class PostgresMonitoringRepositoriesTest {
     }
 
     @Test
+    fun `incident create rejects non-finite value without inserting a row`() {
+        val incidentRepository = incidentRepository()
+        val facility = createFacility()
+        val equipment = createEquipment(facility.id)
+        val measurement = measurementRepository().create(
+            equipmentId = equipment.id,
+            measurementReading = MeasurementReading(
+                type = MeasurementType.SMOKE,
+                unit = MeasurementUnit.PERCENT,
+                value = 12.0
+            )
+        )
+
+        assertIs<com.doduohor.domain.model.IncidentCreationResult.InvalidValue>(incidentRepository.create(
+            facilityId = facility.id,
+            equipmentId = equipment.id,
+            measurementId = measurement.id,
+            type = IncidentType.SMOKE_DETECTED,
+            severity = IncidentSeverity.HIGH,
+            measurementType = MeasurementType.SMOKE,
+            measurementUnit = MeasurementUnit.PERCENT,
+            value = Double.NaN
+        ))
+
+        assertTrue(incidentRepository.findAll().isEmpty())
+    }
+
+    @Test
     fun `findByIncidentId fails when stored incident status is unknown`() {
         val incidentRepository = incidentRepository()
         val facility = createFacility()
@@ -335,6 +363,7 @@ class PostgresMonitoringRepositoriesTest {
                 it[measurementUnit] = MeasurementUnit.PERCENT.name
                 it[value] = 12.0
                 it[createdAt] = Instant.parse("2026-08-12T06:00:00Z")
+                it[statusChangedAt] = Instant.parse("2026-08-12T06:00:00Z")
             }[IncidentTable.id]
         }
 
@@ -368,6 +397,7 @@ class PostgresMonitoringRepositoriesTest {
                 it[measurementUnit] = MeasurementUnit.PERCENT.name
                 it[value] = 12.0
                 it[createdAt] = Instant.parse("2026-08-12T06:00:00Z")
+                it[statusChangedAt] = Instant.parse("2026-08-12T06:00:00Z")
             }[IncidentTable.id]
         }
 

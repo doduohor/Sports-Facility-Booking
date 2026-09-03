@@ -15,5 +15,6 @@ object IncidentTable : Table("incidents") {
     val measurementUnit = varchar("measurement_unit", length = 32)
     val value = double("value")
     val createdAt = timestamp("created_at")
+    val statusChangedAt = timestamp("status_changed_at")
     override val primaryKey = PrimaryKey(id)
 }

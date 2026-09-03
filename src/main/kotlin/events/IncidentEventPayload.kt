@@ -15,5 +15,6 @@ data class IncidentEventPayload(
     val measurementType: String,
     val measurementUnit: String,
     val value: Double,
-    val createdAt: String
+    val createdAt: String,
+    val statusChangedAt: String
 )

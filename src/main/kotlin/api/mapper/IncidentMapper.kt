@@ -14,5 +14,6 @@ fun Incident.toResponse(): IncidentResponse = IncidentResponse(
     measurementType = measurementType.toString().lowercase(),
     measurementUnit = measurementUnit.toString().lowercase(),
     value = value,
-    createdAt = createdAt.toString()
+    createdAt = createdAt.toString(),
+    statusChangedAt = statusChangedAt.toString()
 )

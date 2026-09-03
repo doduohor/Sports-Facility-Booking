@@ -9,4 +9,4 @@ data class MeasurementReading(
         require(!value.isNaN()) {"The value is not a number"}
         require(!value.isInfinite()) {"Value is positive or negative infinity"}
     }
-}
+}   

@@ -1,7 +1,11 @@
 package com.doduohor.di
 
+import com.doduohor.domain.model.Incident
+import com.doduohor.domain.policy.IncidentPolicy
 import com.doduohor.domain.shared.Clock
 import com.doduohor.events.EventPublisher
+import com.doduohor.events.OutboxEventWriter
+import com.doduohor.events.ServerEventPublisher
 import com.doduohor.infrastructure.database.mongo.MongoConnection
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import com.doduohor.infrastructure.messaging.RabbitMqConfig
@@ -28,10 +32,10 @@ import com.doduohor.repository.postgres.PostgresMeasurementRepository
 import com.doduohor.service.BookingService
 import com.doduohor.service.EquipmentService
 import com.doduohor.service.FacilityService
-import com.doduohor.service.IncidentPolicy
 import com.doduohor.service.IncidentService
 import com.doduohor.service.MeasurementService
 import com.doduohor.service.MonitoringService
+import com.doduohor.service.MonitoringEventFactory
 import com.mongodb.kotlin.client.coroutine.MongoDatabase
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -46,10 +50,13 @@ internal val commonModule = module {
     single { BookingService(get(), get()) }
     single { EquipmentService(get(), get()) }
     single { MeasurementService(get(), get()) }
-    single { IncidentService(get(), get(), get()) }
+    single { IncidentService(get(), get(), get(), get()) }
     single { IncidentPolicy() }
     single { EventPublisher() }
-    single { MonitoringService(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single<ServerEventPublisher> { get<EventPublisher>() }
+    single<OutboxEventWriter> { get<OutboxEventsRepository>() }
+    single { MonitoringEventFactory(get()) }
+    single { MonitoringService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }
 
 private fun postgresModule(database: Database) = module {

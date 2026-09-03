@@ -161,14 +161,14 @@ abstract class RepositoryContractTest {
         val secondMeasurement = bundle.measurements.create(
             equipment.id, MeasurementReading(MeasurementType.CO2, MeasurementUnit.PPM, 950.0)
         )
-        val first = bundle.incidents.create(
+        val first = assertIs<IncidentCreationResult.Success<Incident>>(bundle.incidents.create(
             facility.id, equipment.id, firstMeasurement.id, IncidentType.SMOKE_DETECTED, IncidentSeverity.HIGH,
             MeasurementType.SMOKE, MeasurementUnit.PPM, 12.0
-        )
-        val second = bundle.incidents.create(
+        )).value
+        val second = assertIs<IncidentCreationResult.Success<Incident>>(bundle.incidents.create(
             facility.id, equipment.id, secondMeasurement.id, IncidentType.HIGH_CO2, IncidentSeverity.CRITICAL,
             MeasurementType.CO2, MeasurementUnit.PPM, 950.0
-        )
+        )).value
 
         assertIncident(bundle.incidents.findByIncidentId(first.id), first.id, facility.id, equipment.id, firstMeasurement.id,
             IncidentType.SMOKE_DETECTED, IncidentSeverity.HIGH, MeasurementType.SMOKE, MeasurementUnit.PPM, 12.0)
@@ -186,6 +186,34 @@ abstract class RepositoryContractTest {
             assertIncident(incidents[1], second.id, facility.id, equipment.id, secondMeasurement.id,
                 IncidentType.HIGH_CO2, IncidentSeverity.CRITICAL, MeasurementType.CO2, MeasurementUnit.PPM, 950.0)
         }
+
+        val statusChangedAt = contractClock.now().plusSeconds(60)
+        val updated = assertIs<IncidentTransitionResult.Success>(first.startProgress(statusChangedAt)).incident
+        assertIncident(
+            bundle.incidents.save(updated), updated.id, facility.id, equipment.id, firstMeasurement.id,
+            IncidentType.SMOKE_DETECTED, IncidentSeverity.HIGH, MeasurementType.SMOKE, MeasurementUnit.PPM, 12.0,
+            IncidentStatus.IN_PROGRESS, statusChangedAt
+        )
+        assertIncident(
+            bundle.incidents.findByIncidentId(updated.id), updated.id, facility.id, equipment.id, firstMeasurement.id,
+            IncidentType.SMOKE_DETECTED, IncidentSeverity.HIGH, MeasurementType.SMOKE, MeasurementUnit.PPM, 12.0,
+            IncidentStatus.IN_PROGRESS, statusChangedAt
+        )
+        assertNull(bundle.incidents.save(Incident.restore(
+            id = IncidentId(999_999),
+            facilityId = updated.facilityId,
+            equipmentId = updated.equipmentId,
+            measurementId = updated.measurementId,
+            type = updated.type,
+            severity = updated.severity,
+            status = updated.status,
+            measurementType = updated.measurementType,
+            measurementUnit = updated.measurementUnit,
+            value = updated.value,
+            createdAt = updated.createdAt,
+            statusChangedAt = updated.statusChangedAt
+        )))
+
         assertNull(bundle.incidents.findByIncidentId(IncidentId(999_999)))
     }
 
@@ -282,7 +310,8 @@ abstract class RepositoryContractTest {
     }
     private fun assertIncident(
         actual: Incident?, id: IncidentId, facilityId: FacilityId, equipmentId: EquipmentId, measurementId: MeasurementId,
-        type: IncidentType, severity: IncidentSeverity, measurementType: MeasurementType, measurementUnit: MeasurementUnit, value: Double
+        type: IncidentType, severity: IncidentSeverity, measurementType: MeasurementType, measurementUnit: MeasurementUnit, value: Double,
+        status: IncidentStatus = IncidentStatus.OPEN, statusChangedAt: Instant = contractClock.now()
     ) {
         assertNotNull(actual)
         assertEquals(id, actual.id)
@@ -291,11 +320,12 @@ abstract class RepositoryContractTest {
         assertEquals(measurementId, actual.measurementId)
         assertEquals(type, actual.type)
         assertEquals(severity, actual.severity)
-        assertEquals(IncidentStatus.OPEN, actual.status)
+        assertEquals(status, actual.status)
         assertEquals(measurementType, actual.measurementType)
         assertEquals(measurementUnit, actual.measurementUnit)
         assertEquals(value, actual.value)
         assertEquals(contractClock.now(), actual.createdAt)
+        assertEquals(statusChangedAt, actual.statusChangedAt)
     }
     private fun assertOutboxEvent(actual: OutboxEvents, expected: NewOutboxEvents) {
         assertTrue(actual.id > 0)

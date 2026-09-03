@@ -1,6 +1,7 @@
 package com.doduohor.repository
 
 import com.doduohor.domain.model.Incident
+import com.doduohor.domain.model.IncidentCreationResult
 import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
@@ -21,7 +22,9 @@ interface IncidentRepository {
         measurementType: MeasurementType,
         measurementUnit: MeasurementUnit,
         value: Double,
-    ): Incident
+    ): IncidentCreationResult<Incident>
+
+    fun save(incident: Incident): Incident?
 
     fun findByIncidentId(incidentId: IncidentId): Incident?
     fun findByFacilityId(facilityId: FacilityId): List<Incident>

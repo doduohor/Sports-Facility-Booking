@@ -3,6 +3,9 @@ package com.doduohor
 import com.doduohor.domain.model.Equipment
 import com.doduohor.domain.model.EquipmentType
 import com.doduohor.domain.model.FacilityType
+import com.doduohor.domain.model.Incident
+import com.doduohor.domain.model.IncidentCreationResult
+import com.doduohor.domain.policy.IncidentPolicy
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
 import com.doduohor.events.EventPublisher
@@ -34,11 +37,11 @@ import com.doduohor.repository.postgres.PostgresIncidentRepository
 import com.doduohor.repository.postgres.PostgresMeasurementRepository
 import com.doduohor.repository.postgres.PostgresOutboxEventsRepository
 import com.doduohor.service.CreateEquipmentResult
-import com.doduohor.service.IncidentPolicy
 import com.doduohor.service.IncidentService
 import com.doduohor.service.MeasurementService
 import com.doduohor.service.MonitoringService
 import com.doduohor.service.MonitoringServiceResult
+import com.doduohor.service.ProcessMeasurementCommand
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import kotlinx.coroutines.launch
@@ -121,10 +124,7 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
         var result: MonitoringServiceResult? = null
         val processing = launch {
             result = fixture.service.processMeasurement(
-                fixture.equipment.id.value,
-                MeasurementType.TEMPERATURE,
-                MeasurementUnit.CELSIUS,
-                22.0
+                ProcessMeasurementCommand(fixture.equipment.id.value, MeasurementType.TEMPERATURE, MeasurementUnit.CELSIUS, 22.0)
             )
         }
         val event = withTimeout(1_000) { channel.receive() }
@@ -149,10 +149,7 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
         var result: MonitoringServiceResult? = null
         val processing = launch {
             result = fixture.service.processMeasurement(
-                fixture.equipment.id.value,
-                MeasurementType.SMOKE,
-                MeasurementUnit.PERCENT,
-                12.0
+                ProcessMeasurementCommand(fixture.equipment.id.value, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 12.0)
             )
         }
         val events = listOf(
@@ -183,10 +180,7 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
         val channel = fixture.eventPublisher.subscribe()
 
         val result = fixture.service.processMeasurement(
-            fixture.equipment.id.value,
-            MeasurementType.TEMPERATURE,
-            MeasurementUnit.CELSIUS,
-            22.0
+            ProcessMeasurementCommand(fixture.equipment.id.value, MeasurementType.TEMPERATURE, MeasurementUnit.CELSIUS, 22.0)
         )
 
         assertIs<MonitoringServiceResult.OutboxPersistenceError>(result)
@@ -204,10 +198,7 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
         val channel = fixture.eventPublisher.subscribe()
 
         val result = fixture.service.processMeasurement(
-            fixture.equipment.id.value,
-            MeasurementType.SMOKE,
-            MeasurementUnit.PERCENT,
-            12.0
+            ProcessMeasurementCommand(fixture.equipment.id.value, MeasurementType.SMOKE, MeasurementUnit.PERCENT, 12.0)
         )
 
         assertIs<MonitoringServiceResult.OutboxPersistenceError>(result)
@@ -250,7 +241,8 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
                 incidentService = IncidentService(
                     facilityRepository,
                     recordingEquipmentRepository,
-                    recordingIncidentRepository
+                    recordingIncidentRepository,
+                    fixedClock
                 ),
                 equipmentRepository = recordingEquipmentRepository,
                 incidentPolicy = IncidentPolicy(),
@@ -334,7 +326,7 @@ class PostgresMonitoringServiceTransactionalOutboxTest {
             measurementType: MeasurementType,
             measurementUnit: MeasurementUnit,
             value: Double
-        ): com.doduohor.domain.model.Incident {
+        ): IncidentCreationResult<Incident> {
             recorder.recordCurrentTransaction()
             return delegate.create(
                 facilityId, equipmentId, measurementId, type, severity, measurementType, measurementUnit, value

@@ -14,6 +14,7 @@ fun Incident.toEventPayload(): IncidentEventPayload{
         measurementType = this.measurementType.name.lowercase(),
         measurementUnit = this.measurementUnit.name.lowercase(),
         value = this.value,
-        createdAt = this.createdAt.toString()
+        createdAt = this.createdAt.toString(),
+        statusChangedAt = this.statusChangedAt.toString()
     )
 }

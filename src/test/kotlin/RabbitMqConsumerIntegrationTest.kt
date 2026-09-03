@@ -270,6 +270,7 @@ class RabbitMqConsumerIntegrationTest {
                     put("measurementUnit", "CELSIUS")
                     put("value", 99.0)
                     put("createdAt", "2026-08-18T12:00:00Z")
+                    put("statusChangedAt", "2026-08-18T12:00:00Z")
                 }
             )
         )

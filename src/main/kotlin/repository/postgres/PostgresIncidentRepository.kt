@@ -1,6 +1,7 @@
 package com.doduohor.repository.postgres
 
 import com.doduohor.domain.model.Incident
+import com.doduohor.domain.model.IncidentCreationResult
 import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
@@ -19,6 +20,7 @@ import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import java.time.temporal.ChronoUnit
 
 class PostgresIncidentRepository(
@@ -34,7 +36,8 @@ class PostgresIncidentRepository(
         measurementType: MeasurementType,
         measurementUnit: MeasurementUnit,
         value: Double
-    ): Incident = transaction(database) {
+    ): IncidentCreationResult<Incident> = transaction(database) {
+        if (!value.isFinite()) return@transaction IncidentCreationResult.InvalidValue
         val createdAt = clock.now().truncatedTo(ChronoUnit.MICROS)
         val insertedRow = IncidentTable.insert {
             it[IncidentTable.facilityId] = facilityId.value
@@ -47,21 +50,30 @@ class PostgresIncidentRepository(
             it[IncidentTable.measurementUnit] = measurementUnit.name
             it[IncidentTable.value] = value
             it[IncidentTable.createdAt] = createdAt
+            it[IncidentTable.statusChangedAt] = createdAt
         }
 
-        Incident(
-            id = IncidentId(insertedRow[IncidentTable.id]),
+        Incident.createNew(
+            incidentId = IncidentId(insertedRow[IncidentTable.id]),
             facilityId = facilityId,
             equipmentId = equipmentId,
             measurementId = measurementId,
             type = type,
             severity = severity,
-            status = IncidentStatus.OPEN,
             measurementType = measurementType,
             measurementUnit = measurementUnit,
             value = value,
             createdAt = createdAt
         )
+    }
+
+    override fun save(incident: Incident): Incident?  = transaction(database) {
+        val updatedRows = IncidentTable.update( { IncidentTable.id eq incident.id.value } ){
+            it[IncidentTable.status] = incident.status.name
+            it[IncidentTable.statusChangedAt] = incident.statusChangedAt
+        }
+        if(updatedRows == 0) return@transaction null
+        incident
     }
 
     override fun findByIncidentId(incidentId: IncidentId): Incident? = transaction(database) {
@@ -91,8 +103,10 @@ class PostgresIncidentRepository(
         IncidentTable.selectAll().orderBy(IncidentTable.id).map { row -> toIncident(row) }
     }
 
+
+
     private fun toIncident(row: ResultRow): Incident =
-        Incident(
+        Incident.restore(
             id = IncidentId(row[IncidentTable.id]),
             facilityId = FacilityId(row[IncidentTable.facilityId]),
             equipmentId = EquipmentId(row[IncidentTable.equipmentId]),
@@ -103,6 +117,7 @@ class PostgresIncidentRepository(
             measurementType = MeasurementType.valueOf(row[IncidentTable.measurementType]),
             measurementUnit = MeasurementUnit.valueOf(row[IncidentTable.measurementUnit]),
             value = row[IncidentTable.value],
-            createdAt = row[IncidentTable.createdAt]
+            createdAt = row[IncidentTable.createdAt],
+            statusChangedAt =  row[IncidentTable.statusChangedAt]
         )
 }

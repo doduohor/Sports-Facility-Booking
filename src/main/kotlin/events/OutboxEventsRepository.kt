@@ -2,8 +2,7 @@ package com.doduohor.events
 
 import kotlin.uuid.Uuid
 
-interface OutboxEventsRepository {
-    fun saveEvent(event: NewOutboxEvents): SaveEventResult
+interface OutboxEventsRepository : OutboxEventWriter {
     fun findUnprocessedEvents(): List<OutboxEvents>
     fun tryStartPublishing(eventId: Uuid): StartPublishingResult
     fun makeAsPublished(eventId: Uuid): MakeAsPublishedResult

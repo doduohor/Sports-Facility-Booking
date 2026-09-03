@@ -309,7 +309,8 @@ class MessageHandlerTest {
             measurementType = "TEMPERATURE",
             measurementUnit = "CELSIUS",
             value = 36.5,
-            createdAt = "2026-08-14T12:00:00Z"
+            createdAt = "2026-08-14T12:00:00Z",
+            statusChangedAt = "2026-08-14T12:00:00Z"
         )
 
         val event = eventId?.let {

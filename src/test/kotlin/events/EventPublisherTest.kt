@@ -68,4 +68,21 @@ class EventPublisherTest {
         assertEquals(event, firstReceivedEvent)
         assertEquals(event, secondReceivedEvent)
     }
+
+    @Test
+    fun `publish sends a list of events to subscribers in order`() = runTest {
+        val eventPublisher = EventPublisher()
+        val channel = eventPublisher.subscribe()
+        val events = listOf(
+            ServerEvent(ServerEventType.MEASUREMENT_CREATED, buildJsonObject { put("id", 1) }, Instant.EPOCH),
+            ServerEvent(ServerEventType.INCIDENT_CREATED, buildJsonObject { put("id", 2) }, Instant.EPOCH)
+        )
+
+        val publishJob = launch { eventPublisher.publish(events) }
+        val received = withTimeout(1_000) { listOf(channel.receive(), channel.receive()) }
+        publishJob.join()
+        eventPublisher.unsubscribe(channel)
+
+        assertEquals(events, received)
+    }
 }

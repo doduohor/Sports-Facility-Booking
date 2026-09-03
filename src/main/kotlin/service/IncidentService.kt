@@ -1,7 +1,9 @@
 package com.doduohor.service
 
 import com.doduohor.domain.model.Incident
+import com.doduohor.domain.model.IncidentCreationResult
 import com.doduohor.domain.model.IncidentSeverity
+import com.doduohor.domain.model.IncidentTransitionResult
 import com.doduohor.domain.model.IncidentType
 import com.doduohor.domain.model.MeasurementType
 import com.doduohor.domain.model.MeasurementUnit
@@ -12,11 +14,15 @@ import com.doduohor.domain.shared.EquipmentId
 import com.doduohor.domain.shared.FacilityId
 import com.doduohor.domain.shared.IncidentId
 import com.doduohor.domain.shared.MeasurementId
+import com.doduohor.domain.shared.Clock
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 class IncidentService(
     private val facilityRepository: FacilityRepository,
     private val equipmentRepository: EquipmentRepository,
-    private val incidentRepository: IncidentRepository
+    private val incidentRepository: IncidentRepository,
+    private val clock: Clock
 ){
     fun create(
         facilityId: Long,
@@ -39,18 +45,19 @@ class IncidentService(
 
         if(equipment.facilityId != facility.id) return IncidentServiceResult.EquipmentDoesNotBelongToFacility
 
-        return IncidentServiceResult.Success(
-            incidentRepository.create(
-                facilityId = facility.id,
-                equipmentId = equipment.id,
-                measurementId = measurementIdTyped,
-                type = type,
-                severity = severity,
-                measurementType = measurementType,
-                measurementUnit = measurementUnit,
-                value = value
-            )
-        )
+        return when(val resultCreate = incidentRepository.create(
+            facilityId = facility.id,
+            equipmentId = equipment.id,
+            measurementId = measurementIdTyped,
+            type = type,
+            severity = severity,
+            measurementType = measurementType,
+            measurementUnit = measurementUnit,
+            value = value
+        )){
+            IncidentCreationResult.InvalidValue -> IncidentServiceResult.InvalidValue
+            is IncidentCreationResult.Success -> IncidentServiceResult.Success(resultCreate.value)
+        }
     }
 
     fun findByIncidentId(incidentId: Long): Incident?{
@@ -74,6 +81,62 @@ class IncidentService(
         return incidentRepository.findAll()
     }
 
+    fun startProgress(incidentId: Long): IncidentLifecycleServiceResult =
+        transitionIncident(
+            incidentId = incidentId,
+            transition = Incident::startProgress
+        )
+
+    fun markFalsePositive(incidentId: Long): IncidentLifecycleServiceResult =
+        transitionIncident(
+            incidentId = incidentId,
+            transition = Incident::markFalsePositive
+        )
+
+    fun resolve(incidentId: Long): IncidentLifecycleServiceResult =
+        transitionIncident(
+            incidentId = incidentId,
+            transition = Incident::resolve
+        )
+
+    fun reopen(incidentId: Long): IncidentLifecycleServiceResult =
+        transitionIncident(
+            incidentId = incidentId,
+            transition = Incident::reopen
+        )
+
+
+
+    fun close(incidentId: Long): IncidentLifecycleServiceResult =
+        transitionIncident(
+            incidentId = incidentId,
+            transition = Incident::close
+        )
+
+    private fun transitionIncident(
+        incidentId: Long,
+        transition: (Incident, Instant) -> IncidentTransitionResult
+    ): IncidentLifecycleServiceResult{
+        if(incidentId <= 0) return IncidentLifecycleServiceResult.InvalidIncidentId
+        val incident = incidentRepository.findByIncidentId(IncidentId(incidentId)) ?: return IncidentLifecycleServiceResult.NotFindIncidentId
+        val transitionResult = transition(incident, clock.now().truncatedTo(ChronoUnit.MICROS))
+        return incidentTransitionResultProcess(transitionResult)
+    }
+
+    private fun incidentTransitionResultProcess(result: IncidentTransitionResult): IncidentLifecycleServiceResult{
+        return when(result){
+            IncidentTransitionResult.AlreadyClosed -> IncidentLifecycleServiceResult.AlreadyClosed
+            IncidentTransitionResult.AlreadyInFalsePositive -> IncidentLifecycleServiceResult.AlreadyInFalsePositive
+            IncidentTransitionResult.AlreadyInProgress -> IncidentLifecycleServiceResult.AlreadyInProgress
+            IncidentTransitionResult.AlreadyReopen -> IncidentLifecycleServiceResult.AlreadyReopen
+            IncidentTransitionResult.AlreadyResolved -> IncidentLifecycleServiceResult.AlreadyResolved
+            IncidentTransitionResult.InvalidStatus -> IncidentLifecycleServiceResult.InvalidStatus
+            is IncidentTransitionResult.Success -> {
+                val saveResult = incidentRepository.save(result.incident) ?: return IncidentLifecycleServiceResult.StatusUpdateError
+                IncidentLifecycleServiceResult.Success(saveResult)
+            }
+        }
+    }
 }
 
 sealed interface FindIncidentsByFacilityIdResult{
@@ -95,5 +158,19 @@ sealed interface IncidentServiceResult{
     data object InvalidMeasurementId: IncidentServiceResult
     data object NotFindFacilityId: IncidentServiceResult
     data object NotFindEquipmentId: IncidentServiceResult
+    data object InvalidValue: IncidentServiceResult
     data object EquipmentDoesNotBelongToFacility: IncidentServiceResult
+}
+
+sealed interface IncidentLifecycleServiceResult{
+    data class Success(val incident: Incident): IncidentLifecycleServiceResult
+    data object InvalidIncidentId : IncidentLifecycleServiceResult
+    data object InvalidStatus: IncidentLifecycleServiceResult
+    data object AlreadyInProgress: IncidentLifecycleServiceResult
+    data object AlreadyInFalsePositive: IncidentLifecycleServiceResult
+    data object AlreadyResolved: IncidentLifecycleServiceResult
+    data object AlreadyClosed: IncidentLifecycleServiceResult
+    data object AlreadyReopen: IncidentLifecycleServiceResult
+    data object StatusUpdateError: IncidentLifecycleServiceResult
+    data object NotFindIncidentId: IncidentLifecycleServiceResult
 }

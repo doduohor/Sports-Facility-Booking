@@ -1,6 +1,7 @@
 package com.doduohor.repository
 
 import com.doduohor.domain.model.Incident
+import com.doduohor.domain.model.IncidentCreationResult
 import com.doduohor.domain.model.IncidentSeverity
 import com.doduohor.domain.model.IncidentStatus
 import com.doduohor.domain.model.IncidentType
@@ -27,24 +28,34 @@ class InMemoryIncidentRepository(
         measurementType: MeasurementType,
         measurementUnit: MeasurementUnit,
         value: Double
-    ): Incident {
+    ): IncidentCreationResult<Incident> {
         val id = IncidentId(nextId)
         nextId++
 
-        val incident = Incident(
-            id = id,
+        val currentTime = clock.now()
+        when(val incident = Incident.createNew(
+            incidentId = id,
             facilityId = facilityId,
             equipmentId = equipmentId,
             measurementId = measurementId,
             type = type,
             severity = severity,
-            status = IncidentStatus.OPEN,
             measurementType = measurementType,
             measurementUnit = measurementUnit,
             value = value,
-            createdAt = clock.now()
-        )
-        incidents[id] = incident
+            createdAt = currentTime
+        )) {
+            IncidentCreationResult.InvalidValue -> return IncidentCreationResult.InvalidValue
+            is IncidentCreationResult.Success -> {
+                incidents[id] = incident.value
+                return incident
+            }
+        }
+    }
+
+    override fun save(incident: Incident): Incident? {
+        if(incident.id !in incidents) return null
+        incidents[incident.id] = incident
         return incident
     }
 
