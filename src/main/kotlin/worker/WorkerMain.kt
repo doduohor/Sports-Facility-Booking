@@ -9,8 +9,7 @@ import com.doduohor.infrastructure.messaging.RabbitMqConnection
 import com.doduohor.infrastructure.messaging.RabbitMqConsumer
 import com.doduohor.infrastructure.messaging.RabbitMqFactory
 import com.doduohor.infrastructure.messaging.RabbitMqPublisher
-import com.doduohor.infrastructure.notification.TelegramConfig
-import com.doduohor.infrastructure.notification.TelegramNotificationSender
+import com.doduohor.infrastructure.notification.NotificationSenderFactory
 import com.doduohor.infrastructure.time.SystemClock
 import com.doduohor.repository.mongo.MongoEventHistoryRepository
 import com.doduohor.repository.postgres.PostgresOutboxEventsRepository
@@ -228,7 +227,7 @@ fun main() {
     val database = databaseFactory.connect(DatabaseConfig.fromEnv())
     val clock = SystemClock
     val eventHistoryRepository = MongoEventHistoryRepository(mongoConnection.database, clock)
-    val notificationHandler = TelegramNotificationSender(TelegramConfig.fromEnv())
+    val notificationHandler = NotificationSenderFactory.fromEnv()
     val messageHandler = MessageHandler(notificationHandler, eventHistoryRepository, clock)
 
     kotlinx.coroutines.runBlocking {
