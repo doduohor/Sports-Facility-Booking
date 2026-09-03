@@ -16,7 +16,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build /workspace/build/libs/sportsfacilitybooking-1.0.0-SNAPSHOT.jar /app/app.jar
+COPY --from=build /workspace/build/libs/*-all.jar /app/app.jar
 
 EXPOSE 8080
 
