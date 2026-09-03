@@ -245,23 +245,23 @@ scripts/{docker-smoke.sh,docker-e2e.sh}
 
 Проект находится на стадии MVP/production-like разработки. Отдельный файл лицензии в репозитории не заявлен.
 
-## Полный воспроизводимый запуск для технического лида
+## Полный запуск и проверка
 
-Ниже — последовательность для запуска всего контура: API, worker, PostgreSQL, RabbitMQ, MongoDB, smoke/e2e и Gradle-тестов.
+Ниже приведён воспроизводимый сценарий запуска API, worker, PostgreSQL, RabbitMQ и MongoDB, а также проверки основного рабочего потока и автоматических тестов.
 
-### 1. Среда и предварительные требования
+### Подготовка среды
 
-Рекомендуемая среда — Linux, macOS или WSL2 на Windows. На Windows без WSL2 нельзя напрямую выполнить скрипты `scripts/*.sh`; Docker Desktop должен быть установлен и запущен с включённой интеграцией WSL2.
+Поддерживаются Linux, macOS и Windows с WSL2. В Windows скрипты `scripts/*.sh` следует выполнять из WSL2; Docker Desktop должен быть запущен и иметь включённую интеграцию с WSL2.
 
-Необходимо установить:
+Установите:
 
 - Git;
-- Docker Engine или Docker Desktop с Compose v2 и правом текущего пользователя обращаться к Docker daemon;
-- JDK 21 для запуска Gradle-тестов вне контейнера;
-- `bash`, `curl` и `jq` для smoke/e2e-скриптов;
-- доступ в интернет при первом запуске: Gradle загрузит зависимости, Docker — базовые образы и образы инфраструктуры.
+- Docker Engine или Docker Desktop с Compose v2; текущий пользователь должен иметь доступ к Docker daemon;
+- JDK 21 для запуска Gradle и тестов вне контейнеров;
+- `bash`, `curl` и `jq` для сценариев проверки;
+- доступ в интернет при первом запуске, чтобы Gradle и Docker загрузили зависимости и образы.
 
-Проверка окружения:
+Проверьте установленные инструменты:
 
 ```bash
 git --version
@@ -273,54 +273,37 @@ curl --version
 jq --version
 ```
 
-Перед запуском освободите локальные порты `8080`, `5432`, `5672`, `15672` и `27017`, либо измените соответствующие значения в `.env`.
+Освободите порты `8080`, `5432`, `5672`, `15672` и `27017` либо измените соответствующие значения в `.env`.
 
-### 2. Получение проекта и исправление известного блокера
+### Получение и настройка проекта
 
 ```bash
 git clone <URL_репозитория> sports-facility-booking
 cd sports-facility-booking
 cp .env.example .env
-```
-
-В текущей версии репозитория файл `gradlew` имеет CRLF-переводы строк. На Linux, macOS и в Docker Linux-контейнере это приводит к ошибке `bad interpreter: /bin/sh^M`. Поэтому до первого запуска нормализуйте wrapper в своей рабочей копии:
-
-```bash
-tr -d '\r' < gradlew > gradlew.lf
-mv gradlew.lf gradlew
-chmod +x gradlew
-```
-
-Это необходимый временный обход. Без него проект **не запускается полностью из чистой Linux/WSL2/Docker-среды**, потому что `Dockerfile` также выполняет `./gradlew` при сборке образа. На Windows `gradlew.bat` подходит для Gradle, но Docker-сборка всё равно использует Linux-wrapper и требует нормализации `gradlew`.
-
-Проверьте wrapper и конфигурацию Compose:
-
-```bash
 ./gradlew --version
 docker compose --env-file .env config --quiet
 ```
 
-### 3. Настройка локальных параметров
+Файл `gradlew` в репозитории хранится с LF-переводами строк, а `gradlew.bat` — с CRLF; `.gitattributes` поддерживает эти окончания строк при извлечении исходного кода. Это позволяет использовать Linux-wrapper в Linux, macOS, WSL2 и Docker без дополнительной подготовки.
 
-`.env.example` содержит безопасные только для локальной разработки значения. Для демонстрации достаточно оставить их как есть. Для реального Telegram-уведомления замените в `.env`:
+`.env.example` содержит значения для локальной разработки. Для отправки настоящих Telegram-уведомлений укажите в `.env` собственные значения:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<токен_бота>
-TELEGRAM_CHAT_ID=<числовой_id_чата>
+TELEGRAM_CHAT_ID=<числовой_идентификатор_чата>
 ```
 
-Также можно изменить `API_PORT`, PostgreSQL-, RabbitMQ- и MongoDB-порты, если локальные порты уже заняты. Не коммитьте `.env` с реальными секретами.
+При необходимости измените `API_PORT` и порты PostgreSQL, RabbitMQ или MongoDB. Не добавляйте `.env` с реальными секретами в Git.
 
-### 4. Запуск полного стека
+### Запуск сервисов
 
 ```bash
 docker compose --env-file .env up --build -d
 docker compose --env-file .env ps
 ```
 
-Ожидаемое состояние: `postgres`, `rabbit`, `mongo` и `api` имеют `healthy`; `worker` находится в состоянии `running`.
-
-Проверка API:
+После запуска сервисы `postgres`, `rabbit`, `mongo` и `api` должны перейти в состояние `healthy`, а `worker` — в `running`. Проверьте API:
 
 ```bash
 curl --fail http://localhost:8080/health
@@ -332,17 +315,17 @@ curl --fail http://localhost:8080/health
 {"name":"Health","text":"UP"}
 ```
 
-Для просмотра логов:
+Логи приложений доступны командой:
 
 ```bash
 docker compose --env-file .env logs -f api worker
 ```
 
-RabbitMQ Management UI доступен по адресу `http://localhost:15672`; учётные данные берутся из `RABBIT_USER` и `RABBIT_PASSWORD` в `.env`.
+Веб-интерфейс RabbitMQ доступен по адресу `http://localhost:15672`; учётные данные заданы переменными `RABBIT_USER` и `RABBIT_PASSWORD` в `.env`.
 
-### 5. Проверка рабочего сценария API
+### Проверка основного сценария API
 
-Ниже — минимальный сценарий создания объекта, оборудования и измерения. Он создаёт низкоприоритетное измерение температуры, чтобы не требовать рабочего Telegram-токена.
+Следующий сценарий создаёт спортивный объект, оборудование и низкоприоритетное измерение температуры. Рабочий Telegram-токен для него не требуется.
 
 ```bash
 API_URL=http://localhost:8080
@@ -350,13 +333,13 @@ API_URL=http://localhost:8080
 FACILITY_ID=$(curl --fail --silent --show-error \
   --user admin:admin \
   --header 'Content-Type: application/json' \
-  --data '{"name":"Tech Lead Demo Pool","type":"POOL"}' \
+  --data '{"name":"Demo Pool","type":"POOL"}' \
   "$API_URL/api/facilities" | jq --raw-output '.id')
 
 EQUIPMENT_ID=$(curl --fail --silent --show-error \
   --user admin:admin \
   --header 'Content-Type: application/json' \
-  --data "{\"facilityId\":$FACILITY_ID,\"name\":\"Demo temperature sensor\",\"type\":\"VENTILATION\"}" \
+  --data "{\"facilityId\":$FACILITY_ID,\"name\":\"Temperature sensor\",\"type\":\"VENTILATION\"}" \
   "$API_URL/api/equipments" | jq --raw-output '.id')
 
 curl --fail --silent --show-error \
@@ -366,7 +349,7 @@ curl --fail --silent --show-error \
   "$API_URL/api/measurements" | jq
 ```
 
-После этого можно проверить данные и outbox:
+Проверьте сохранённые измерения и публикацию outbox-событий:
 
 ```bash
 curl --fail --silent "$API_URL/api/measurements" | jq
@@ -375,9 +358,9 @@ docker compose --env-file .env exec -T postgres \
   -c 'SELECT event_id, event_type, status, attempt, created_at, published_at FROM outbox_events ORDER BY id;'
 ```
 
-### 6. Полный прогон проверок
+### Автоматические проверки
 
-Сначала остановите основной Compose-стек либо убедитесь, что его порты не конфликтуют с изолированными скриптами. Затем выполните:
+Для полного прогона остановите основной Compose-стек или убедитесь, что его порты не конфликтуют с изолированными сценариями, затем выполните:
 
 ```bash
 ./gradlew test
@@ -385,26 +368,20 @@ bash scripts/docker-smoke.sh
 bash scripts/docker-e2e.sh
 ```
 
-`./gradlew test` запускает unit-, контрактные и Testcontainers-интеграционные тесты. Ему нужен доступ к Docker daemon. `docker-smoke.sh` и `docker-e2e.sh` используют отдельные Compose project names, печатают логи при ошибке и удаляют только собственные контейнеры и volumes.
+`./gradlew test` запускает модульные, контрактные и интеграционные тесты на Testcontainers и поэтому требует доступа к Docker daemon. Скрипты `docker-smoke.sh` и `docker-e2e.sh` используют отдельные имена Compose-проектов, выводят логи при ошибке и удаляют только созданные ими контейнеры и volumes. E2E-сценарий всегда читает `.env.example`, поэтому не использует секреты из локального `.env`.
 
-Обратите внимание: e2e-скрипт всегда читает `.env.example`, а не ваш `.env`. Он не должен использовать реальные Telegram-секреты.
+### Остановка и очистка
 
-### 7. Остановка и очистка
-
-Остановка без удаления данных:
+Остановить сервисы, сохранив данные:
 
 ```bash
 docker compose --env-file .env down
 ```
 
-Полная очистка локальных данных PostgreSQL, RabbitMQ и MongoDB:
+Полностью удалить локальные данные PostgreSQL, RabbitMQ и MongoDB:
 
 ```bash
 docker compose --env-file .env down --volumes --remove-orphans
 ```
 
-Последняя команда удаляет только volumes этого Compose-проекта; данные после неё восстановить нельзя.
-
-### Что в текущем окружении проекта отсутствует
-
-В среде, где выполнялась проверка документации, доступны JDK 21, Docker Compose и `jq`, но текущему пользователю отказано в доступе к Docker daemon (`permission denied ... /var/run/docker.sock`). Поэтому здесь нельзя честно подтвердить фактический запуск контейнеров, smoke/e2e и Testcontainers. На рабочей машине технического лида это устраняется запуском Docker Desktop/Engine и предоставлением пользователю доступа к daemon (например, через корректно настроенную группу `docker` на Linux).
+Последняя команда удаляет volumes данного Compose-проекта; восстановить данные после неё нельзя.
