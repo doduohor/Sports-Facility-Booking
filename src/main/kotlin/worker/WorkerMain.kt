@@ -231,7 +231,17 @@ fun main() {
     val messageHandler = MessageHandler(notificationHandler, eventHistoryRepository, clock)
 
     kotlinx.coroutines.runBlocking {
-        eventHistoryRepository.createIndexes()
+        initializeMongoEventHistory(
+            repository = eventHistoryRepository,
+            onFailure = { attempt, maxAttempts, exception ->
+                logger.warn(
+                    "MongoDB event history initialization attempt {} of {} failed",
+                    attempt,
+                    maxAttempts,
+                    exception
+                )
+            }
+        )
         val lifecycle = WorkerLifecycle(
             connector = WorkerConnectorFactory(
                 rabbitConfig,

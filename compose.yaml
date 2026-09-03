@@ -120,7 +120,7 @@ services:
       - mongodb_config:/data/configdb
       - mongodb_mongot:/data/mongot
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\""]
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$$MONGODB_INITDB_ROOT_USERNAME\" --password \"$$MONGODB_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval \"db.adminCommand({ ping: 1 }).ok\" | grep -q '^1$'"]
       interval: 5s
       timeout: 5s
       retries: 10
