@@ -1,2 +1,62 @@
-# Sports-Facility-Booking
-Kotlin/Ktor backend system for sports facility booking, equipment monitoring, event processing, and analytics.
+# sportsfacilitybooking
+
+This project was created using the [Ktor Project Generator](https://start.ktor.io).
+
+Here are some useful links to get you started:
+ * [Ktor Documentation](https://ktor.io/docs/home.html)
+ * [Ktor GitHub page](https://github.com/ktorio/ktor)
+ * [Ktor Slack chat](https://app.slack.com/client/T09229ZC6/C0A974TJ9). [Request an invite](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up).
+
+
+## Features
+Here's a list of features included in this project:
+
+| Name | Description |
+|------|-------------|
+| [Call Logging](https://start.ktor.io/p/io.ktor/server-call-logging) | Logs client requests |
+| [Status Pages](https://start.ktor.io/p/io.ktor/server-status-pages) | Provides exception handling for routes |
+| [Content Negotiation](https://start.ktor.io/p/io.ktor/server-content-negotiation) | Provides automatic content conversion according to Content-Type and Accept headers |
+| [kotlinx.serialization](https://start.ktor.io/p/io.ktor/server-kotlinx-serialization) | Handles JSON serialization using kotlinx.serialization library |
+
+
+## Building & Running
+To build or run the project, use one of the following tasks:
+
+
+| Task | Description |
+|------|-------------|
+| `./gradlew test`    | Run the tests     |
+| `./gradlew build`   | Build the project |
+| `./gradlew run`     | Run the server    |
+
+If the server starts successfully, you'll see the following output:
+```
+2024-12-04 14:32:45.584 [main] INFO  Application - Application started in 0.303 seconds.
+2024-12-04 14:32:45.682 [main] INFO  Application - Responding at http://0.0.0.0:8080
+```
+
+## Docker
+
+Run the API with Postgres:
+
+```bash
+docker compose up --build
+```
+
+Check the API:
+
+```bash
+curl http://localhost:8080/health
+```
+
+The API container receives database settings through environment variables:
+
+| Variable | Default in compose |
+|----------|--------------------|
+| `DATABASE_URL` | `jdbc:postgresql://postgres:5432/sports_facility_booking` |
+| `DATABASE_USER` | `sports` |
+| `DATABASE_PASSWORD` | `sports` |
+
+## Technical Debt
+
+- After the MVP is complete, revisit `EventPublisher`: replace plain `mutableSetOf(...)` with a safer subscriber storage approach and consider buffered channels for SSE subscribers.
