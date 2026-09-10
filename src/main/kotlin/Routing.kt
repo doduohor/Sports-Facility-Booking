@@ -47,7 +47,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receiveChannel
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.exhausted
 import io.ktor.server.application.*
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.contentType
@@ -173,7 +173,7 @@ fun Route.facilityRoutes(facilityService: FacilityService) {
 
     authenticate("auth-basic") {
         put("/api/facilities/{facilityId}/activate") {
-            if (!call.receiveChannel().readRemaining().exhausted()) {
+            if (!call.receiveChannel().exhausted()) {
                 if (!call.requireJsonContentType()) return@put
                 call.respond(
                     HttpStatusCode.BadRequest,

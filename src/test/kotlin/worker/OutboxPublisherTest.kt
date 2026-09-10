@@ -45,6 +45,7 @@ class OutboxPublisherTest {
         val rabbitEvent = Json.decodeFromString<RabbitMqEvent>(message)
         assertEquals(event.eventId.toString(), rabbitEvent.eventId)
         assertEquals(IntegrationEventType.MEASUREMENT_CREATED, rabbitEvent.eventType)
+        assertEquals(event.createdAt.toString(), rabbitEvent.createdAt)
         assertEquals(event.payload, rabbitEvent.data)
         assertTrue(repository.markedPublished)
         assertFalse(repository.savedError)

@@ -35,4 +35,19 @@ class RabbitMqEventTest {
 
         assertEquals(instant.toString(), event.createdAt)
     }
+
+    @Test
+    fun `transport envelope keeps the stable event contract`() {
+        val event = RabbitMqEvent(
+            eventId = "event-1",
+            eventType = IntegrationEventType.INCIDENT_CREATED,
+            createdAt = "2026-08-20T12:00:00Z",
+            data = Json.parseToJsonElement("{\"id\":13}")
+        )
+
+        assertEquals(
+            "{\"eventId\":\"event-1\",\"eventType\":\"INCIDENT_CREATED\",\"createdAt\":\"2026-08-20T12:00:00Z\",\"data\":{\"id\":13}}",
+            Json.encodeToString(event)
+        )
+    }
 }

@@ -7,6 +7,7 @@ import com.doduohor.events.SaveErrorResult
 import com.doduohor.events.StartPublishingResult
 import com.doduohor.infrastructure.messaging.MessagePublisher
 import com.doduohor.infrastructure.messaging.OutboxEventMapper
+import com.doduohor.infrastructure.messaging.RabbitMqEventSerializer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -14,16 +15,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
-import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
-/**
- * Publishes claimed Outbox events. A cancellation after the claim deliberately
- * leaves PROCESSING unchanged: the schema has no lease timestamp, so reclaiming
- * it automatically would risk concurrent duplicate publication. Recovery is
- * bounded by the existing repository policy and requires an explicit recovery
- * operation until a lease column is introduced.
- */
+
 class OutboxPublisher(
     private val outboxEventsRepository: OutboxEventsRepository,
     private val messagePublisher: MessagePublisher,
@@ -94,7 +88,7 @@ class OutboxPublisher(
 
             try {
                 val rabbitEvent = OutboxEventMapper.toRabbitMqEvent(event)
-                val message = Json.encodeToString(rabbitEvent)
+                val message = RabbitMqEventSerializer.serialize(rabbitEvent)
                 messagePublisher.publish(message)
             } catch (exception: CancellationException) {
                 throw exception

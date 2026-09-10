@@ -12,6 +12,7 @@ import com.doduohor.domain.shared.FacilityId
 import com.doduohor.domain.shared.IncidentId
 import com.doduohor.domain.shared.MeasurementId
 import com.doduohor.events.IntegrationEventType
+import com.doduohor.events.IntegrationEvent
 import com.doduohor.events.ServerEventType
 import com.doduohor.infrastructure.time.FixedClock
 import java.time.Instant
@@ -28,6 +29,19 @@ class MonitoringEventFactoryTest {
         MeasurementReading(MeasurementType.SMOKE, MeasurementUnit.PERCENT, 12.0),
         instant
     )
+
+    @Test
+    fun `creates application integration events with transport independent metadata`() {
+        val events = MonitoringEventFactory(FixedClock(instant)).create(measurement, null)
+
+        val event = events.integrationEvents.single()
+
+        assertEquals(IntegrationEventType.MEASUREMENT_CREATED, event.eventType)
+        assertEquals(instant, event.createdAt)
+        assertEquals(event.payload, events.outboxEvents.single().payload)
+        assertEquals(event.payload, events.serverEvents.single().data)
+        assert(event is IntegrationEvent.MeasurementCreated)
+    }
 
     @Test
     fun `creates matching measurement and incident outbox and server events in order`() {
